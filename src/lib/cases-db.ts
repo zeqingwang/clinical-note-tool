@@ -52,7 +52,35 @@ export async function getCaseById(id: string): Promise<CaseDetail | null> {
     title: typeof doc.title === "string" ? doc.title : "",
     content: typeof doc.content === "string" ? doc.content : "",
     updatedAt: doc.updatedAt instanceof Date ? doc.updatedAt : new Date(0),
+    ...(typeof doc.rawText === "string" ? { rawText: doc.rawText } : {}),
+    ...(doc.structuredOutput !== undefined ? { structuredOutput: doc.structuredOutput } : {}),
   };
+}
+
+export async function ingestCaseFile(
+  id: string,
+  data: {
+    rawText: string;
+    structuredOutput: unknown;
+    title?: string;
+  },
+): Promise<boolean> {
+  if (!ObjectId.isValid(id)) return false;
+  const client = await clientPromise;
+  const db = client.db(dbName());
+  const $set: Record<string, unknown> = {
+    rawText: data.rawText,
+    structuredOutput: data.structuredOutput,
+    updatedAt: new Date(),
+  };
+  if (data.title !== undefined) {
+    $set.title = data.title;
+  }
+  const result = await db.collection(CASE_COLLECTION).updateOne(
+    { _id: new ObjectId(id) },
+    { $set },
+  );
+  return result.matchedCount > 0;
 }
 
 export async function updateCase(id: string, data: CaseEditableFields): Promise<boolean> {
