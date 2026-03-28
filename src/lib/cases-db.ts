@@ -1,0 +1,74 @@
+import { ObjectId, type Document } from "mongodb";
+import clientPromise from "@/lib/mongodb";
+import {
+  CASE_COLLECTION,
+  caseEditableFieldsSchema,
+  createDraftCaseRecord,
+} from "@/models/case";
+import type { CaseDetail, CaseEditableFields, CaseListItem } from "@/types/case";
+
+function dbName() {
+  return process.env.MONGODB_DB?.trim() || undefined;
+}
+
+export type { CaseDetail, CaseListItem };
+
+export async function insertDraftCase(): Promise<string> {
+  const client = await clientPromise;
+  const db = client.db(dbName());
+  const now = new Date();
+  const doc = createDraftCaseRecord(now);
+  const { insertedId } = await db.collection(CASE_COLLECTION).insertOne(doc);
+  return insertedId.toHexString();
+}
+
+export async function listCases(): Promise<CaseListItem[]> {
+  const client = await clientPromise;
+  const db = client.db(dbName());
+  const docs = await db
+    .collection(CASE_COLLECTION)
+    .find({})
+    .sort({ updatedAt: -1 })
+    .limit(200)
+    .toArray();
+
+  return docs.map((d) => ({
+    id: (d._id as ObjectId).toHexString(),
+    title: typeof d.title === "string" && d.title.trim() ? d.title : "Untitled",
+    updatedAt: d.updatedAt instanceof Date ? d.updatedAt : new Date(0),
+  }));
+}
+
+export async function getCaseById(id: string): Promise<CaseDetail | null> {
+  if (!ObjectId.isValid(id)) return null;
+  const client = await clientPromise;
+  const db = client.db(dbName());
+  const doc = (await db
+    .collection(CASE_COLLECTION)
+    .findOne({ _id: new ObjectId(id) })) as Document | null;
+  if (!doc) return null;
+  return {
+    id: (doc._id as ObjectId).toHexString(),
+    title: typeof doc.title === "string" ? doc.title : "",
+    content: typeof doc.content === "string" ? doc.content : "",
+    updatedAt: doc.updatedAt instanceof Date ? doc.updatedAt : new Date(0),
+  };
+}
+
+export async function updateCase(id: string, data: CaseEditableFields): Promise<boolean> {
+  if (!ObjectId.isValid(id)) return false;
+  const { title, content } = caseEditableFieldsSchema.parse(data);
+  const client = await clientPromise;
+  const db = client.db(dbName());
+  const result = await db.collection(CASE_COLLECTION).updateOne(
+    { _id: new ObjectId(id) },
+    {
+      $set: {
+        title,
+        content,
+        updatedAt: new Date(),
+      },
+    },
+  );
+  return result.matchedCount > 0;
+}
