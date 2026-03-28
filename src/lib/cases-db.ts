@@ -1,11 +1,12 @@
-import { ObjectId, type Document } from "mongodb";
+import { ObjectId, type Document, type UpdateFilter } from "mongodb";
 import clientPromise from "@/lib/mongodb";
 import {
   CASE_COLLECTION,
   caseEditableFieldsSchema,
   createDraftCaseRecord,
 } from "@/models/case";
-import type { CaseDetail, CaseEditableFields, CaseListItem } from "@/types/case";
+import type { StructuredOutput } from "@/models/case";
+import type { CaseDetail, CaseEditableFields, CaseListItem, SourceDocument } from "@/types/case";
 
 function dbName() {
   return process.env.MONGODB_DB?.trim() || undefined;
@@ -39,6 +40,28 @@ export async function listCases(): Promise<CaseListItem[]> {
   }));
 }
 
+function normalizeSourceDocuments(doc: Document): SourceDocument[] {
+  if (Array.isArray(doc.sourceDocuments) && doc.sourceDocuments.length > 0) {
+    return doc.sourceDocuments.filter(
+      (item): item is SourceDocument =>
+        item != null &&
+        typeof item === "object" &&
+        "type" in item &&
+        "structuredOutput" in item,
+    );
+  }
+  if (doc.structuredOutput != null) {
+    return [
+      {
+        type: "ER_NOTE",
+        fileName: "Legacy (root structuredOutput)",
+        structuredOutput: doc.structuredOutput,
+      },
+    ];
+  }
+  return [];
+}
+
 export async function getCaseById(id: string): Promise<CaseDetail | null> {
   if (!ObjectId.isValid(id)) return null;
   const client = await clientPromise;
@@ -52,34 +75,42 @@ export async function getCaseById(id: string): Promise<CaseDetail | null> {
     title: typeof doc.title === "string" ? doc.title : "",
     content: typeof doc.content === "string" ? doc.content : "",
     updatedAt: doc.updatedAt instanceof Date ? doc.updatedAt : new Date(0),
-    ...(typeof doc.rawText === "string" ? { rawText: doc.rawText } : {}),
-    ...(doc.structuredOutput !== undefined ? { structuredOutput: doc.structuredOutput } : {}),
+    sourceDocuments: normalizeSourceDocuments(doc),
   };
 }
 
 export async function ingestCaseFile(
   id: string,
   data: {
-    rawText: string;
-    structuredOutput: unknown;
+    fileName: string;
+    structuredOutput: StructuredOutput;
     title?: string;
   },
 ): Promise<boolean> {
   if (!ObjectId.isValid(id)) return false;
   const client = await clientPromise;
   const db = client.db(dbName());
-  const $set: Record<string, unknown> = {
-    rawText: data.rawText,
+
+  const entry = {
+    type: "ER_NOTE" as const,
+    fileName: data.fileName,
     structuredOutput: data.structuredOutput,
+  };
+
+  const $set: Record<string, unknown> = {
     updatedAt: new Date(),
   };
   if (data.title !== undefined) {
     $set.title = data.title;
   }
-  const result = await db.collection(CASE_COLLECTION).updateOne(
-    { _id: new ObjectId(id) },
-    { $set },
-  );
+
+  const update = {
+    $push: { sourceDocuments: entry },
+    $set,
+    $unset: { rawText: "", structuredOutput: "" },
+  } as unknown as UpdateFilter<Document>;
+
+  const result = await db.collection(CASE_COLLECTION).updateOne({ _id: new ObjectId(id) }, update);
   return result.matchedCount > 0;
 }
 

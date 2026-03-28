@@ -1,7 +1,13 @@
 import { z } from "zod";
-import type { CaseEditableFields, CaseStoredFields } from "@/types/case";
+import type { CaseEditableFields, CaseStoredFields, SourceDocument } from "@/types/case";
 
 export const CASE_COLLECTION = "cases" as const;
+
+const sourceDocumentSchema = z.object({
+  type: z.enum(["ER_NOTE", "HP_NOTE", "OTHER"]),
+  fileName: z.string().optional(),
+  structuredOutput: z.unknown(),
+});
 
 /** Fields persisted on every case document */
 export const caseStoredFieldsSchema: z.ZodType<CaseStoredFields> = z.object({
@@ -9,8 +15,7 @@ export const caseStoredFieldsSchema: z.ZodType<CaseStoredFields> = z.object({
   content: z.string(),
   createdAt: z.date(),
   updatedAt: z.date(),
-  rawText: z.string().optional(),
-  structuredOutput: z.unknown().optional(),
+  sourceDocuments: z.array(sourceDocumentSchema),
 });
 
 /** User-editable fields (form / API body) */
@@ -25,6 +30,7 @@ export function createDraftCaseRecord(now: Date = new Date()): CaseStoredFields 
     content: "",
     createdAt: now,
     updatedAt: now,
+    sourceDocuments: [],
   });
 }
 
@@ -34,23 +40,18 @@ export type {
   CaseEditableFields,
   CaseListItem,
   CaseStoredFields,
+  SourceDocument,
+  SourceDocumentType,
 } from "@/types/case";
 
 
 
-export type SourceDocumentType = "ER_NOTE" | "HP_NOTE" | "OTHER";
 export type DispositionRecommendation =
   | "ADMIT"
   | "OBSERVE"
   | "DISCHARGE"
   | "UNKNOWN";
 export type CaseStatus = "DRAFT" | "GENERATED" | "FINAL";
-
-export interface SourceDocument {
-  type: SourceDocumentType;
-  fileName?: string;
-  data?: unknown;
-}
 
 /**
  * One row from “Vital Signs: This Visit” (matches typical EMR columns).
@@ -192,8 +193,8 @@ export interface CaseModel {
 
   sourceDocuments: SourceDocument[];
 
-  generatedOutput?: StructuredOutput;
-  editedOutput?: StructuredOutput;
+  // generatedOutput?: StructuredOutput;
+  // editedOutput?: StructuredOutput;
 
   isEdited: boolean;
 

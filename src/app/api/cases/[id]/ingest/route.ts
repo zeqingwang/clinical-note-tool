@@ -59,17 +59,22 @@ export async function POST(request: Request, context: RouteCtx) {
   const title =
     !existing?.title?.trim() && chief ? chief.slice(0, 200) : undefined;
 
-  const ok = await ingestCaseFile(id, { rawText, structuredOutput, title });
+  const ok = await ingestCaseFile(id, {
+    fileName: file.name,
+    structuredOutput,
+    title,
+  });
   if (!ok) {
     return NextResponse.json({ error: "Case not found" }, { status: 404 });
   }
+
+  const updated = await getCaseById(id);
 
   revalidatePath("/cases");
   revalidatePath(`/cases/${id}`);
 
   return NextResponse.json({
-    rawText,
-    structuredOutput,
+    sourceDocuments: updated?.sourceDocuments ?? [],
     titleApplied: Boolean(title),
   });
 }

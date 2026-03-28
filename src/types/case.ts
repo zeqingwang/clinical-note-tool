@@ -1,5 +1,15 @@
 import type { ObjectId } from "mongodb";
 
+export type SourceDocumentType = "ER_NOTE" | "HP_NOTE" | "OTHER";
+
+/** One uploaded file’s structured parse (raw text is not stored). */
+export interface SourceDocument {
+  type: SourceDocumentType;
+  fileName?: string;
+  /** Matches `StructuredOutput` / `ParsedERNote` from `@/models/case` */
+  structuredOutput: unknown;
+}
+
 /** User-editable fields (forms, API body, updates) */
 export type CaseEditableFields = {
   title: string;
@@ -10,10 +20,7 @@ export type CaseEditableFields = {
 export type CaseStoredFields = CaseEditableFields & {
   createdAt: Date;
   updatedAt: Date;
-  /** Plain text extracted from an uploaded note (PDF/DOCX/TXT) */
-  rawText?: string;
-  /** GPT-parsed ER note — shape matches `ParsedERNote` in `@/models/case` */
-  structuredOutput?: unknown;
+  sourceDocuments: SourceDocument[];
 };
 
 /** Document as returned from MongoDB */
@@ -25,8 +32,7 @@ export type CaseDocument = CaseStoredFields & {
 export type CaseDetail = CaseEditableFields & {
   id: string;
   updatedAt: Date;
-  rawText?: string;
-  structuredOutput?: unknown;
+  sourceDocuments: SourceDocument[];
 };
 
 /** Row in the cases list */

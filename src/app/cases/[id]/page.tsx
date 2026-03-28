@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useState, useTransition } from "react";
-import type { CaseDetail } from "@/types/case";
+import type { CaseDetail, SourceDocument } from "@/types/case";
 
 export default function CaseEditPage() {
   const router = useRouter();
@@ -19,8 +19,6 @@ export default function CaseEditPage() {
   const [pending, startTransition] = useTransition();
   const [ingesting, setIngesting] = useState(false);
   const [ingestError, setIngestError] = useState<string | null>(null);
-  const [rawTextPreview, setRawTextPreview] = useState<string | null>(null);
-  const [structuredPreview, setStructuredPreview] = useState<unknown>(null);
 
   useEffect(() => {
     if (!id) {
@@ -47,8 +45,6 @@ export default function CaseEditPage() {
       setDoc(data);
       setTitle(data.title);
       setContent(data.content);
-      setRawTextPreview(typeof data.rawText === "string" ? data.rawText : null);
-      setStructuredPreview(data.structuredOutput ?? null);
       setLoading(false);
     })();
 
@@ -80,8 +76,6 @@ export default function CaseEditPage() {
         setDoc(data);
         setTitle(data.title);
         setContent(data.content);
-        setRawTextPreview(typeof data.rawText === "string" ? data.rawText : null);
-        setStructuredPreview(data.structuredOutput ?? null);
       }
 
       startTransition(() => {
@@ -108,8 +102,7 @@ export default function CaseEditPage() {
         });
         const payload = (await res.json().catch(() => ({}))) as {
           error?: string;
-          rawText?: string;
-          structuredOutput?: unknown;
+          sourceDocuments?: SourceDocument[];
           titleApplied?: boolean;
         };
 
@@ -118,17 +111,12 @@ export default function CaseEditPage() {
           return;
         }
 
-        if (typeof payload.rawText === "string") {
-          setRawTextPreview(payload.rawText);
-        }
-        if (payload.structuredOutput !== undefined) {
-          setStructuredPreview(payload.structuredOutput);
-        }
-        if (payload.titleApplied && typeof payload.structuredOutput === "object" && payload.structuredOutput) {
-          const chief = (payload.structuredOutput as { chiefComplaint?: string }).chiefComplaint;
-          if (typeof chief === "string" && chief.trim()) {
-            setTitle((t) => (t.trim() ? t : chief.slice(0, 200)));
-          }
+        const refreshed = await fetch(`/api/cases/${id}`);
+        if (refreshed.ok) {
+          const data = (await refreshed.json()) as CaseDetail;
+          setDoc(data);
+          setTitle(data.title);
+          setContent(data.content);
         }
 
         startTransition(() => router.refresh());
@@ -218,26 +206,28 @@ export default function CaseEditPage() {
         ) : null}
       </section>
 
-      {rawTextPreview ? (
-        <details className="rounded-xl border border-zinc-200 dark:border-zinc-800">
-          <summary className="cursor-pointer px-4 py-3 text-sm font-medium">
-            Extracted raw text
-          </summary>
-          <pre className="max-h-48 overflow-auto border-t border-zinc-200 px-4 py-3 text-xs whitespace-pre-wrap dark:border-zinc-800">
-            {rawTextPreview}
-          </pre>
-        </details>
-      ) : null}
-
-      {structuredPreview != null ? (
-        <details className="rounded-xl border border-zinc-200 dark:border-zinc-800" open>
-          <summary className="cursor-pointer px-4 py-3 text-sm font-medium">
-            Structured output (JSON)
-          </summary>
-          <pre className="max-h-[28rem] overflow-auto border-t border-zinc-200 px-4 py-3 text-xs leading-relaxed dark:border-zinc-800">
-            {JSON.stringify(structuredPreview, null, 2)}
-          </pre>
-        </details>
+      {doc.sourceDocuments.length > 0 ? (
+        <div className="flex flex-col gap-4">
+          <h2 className="text-lg font-semibold tracking-tight">Structured output (by file)</h2>
+          <p className="text-xs text-zinc-600 dark:text-zinc-400">
+            Raw uploads are not stored—only the parsed JSON below is saved on each case.
+          </p>
+          {doc.sourceDocuments.map((sd, index) => (
+            <details
+              key={`${sd.fileName ?? "doc"}-${index}`}
+              className="rounded-xl border border-zinc-200 dark:border-zinc-800"
+              open={index === doc.sourceDocuments.length - 1}
+            >
+              <summary className="cursor-pointer px-4 py-3 text-sm font-medium">
+                {sd.fileName ?? `Document ${index + 1}`}{" "}
+                <span className="font-normal text-zinc-500">({sd.type})</span>
+              </summary>
+              <pre className="max-h-[28rem] overflow-auto border-t border-zinc-200 px-4 py-3 text-xs leading-relaxed dark:border-zinc-800">
+                {JSON.stringify(sd.structuredOutput, null, 2)}
+              </pre>
+            </details>
+          ))}
+        </div>
       ) : null}
 
       <form
