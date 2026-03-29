@@ -2,13 +2,28 @@ import { revalidatePath } from "next/cache";
 import { NextResponse } from "next/server";
 import { ObjectId } from "mongodb";
 import { extractTextFromUpload } from "@/lib/extract-document-text";
+import { classifyDocumentTypeWithGpt } from "@/lib/classify-document-type-gpt";
+import type { ClassificationSource } from "@/lib/classify-document-type-gpt";
+import { parseDocumentTypeFormOverride } from "@/lib/infer-document-type";
 import { getCaseById, ingestCaseFile } from "@/lib/cases-db";
-import { structureErNoteFromRawText } from "@/lib/structure-er-note";
-import type { ParsedERNote } from "@/models/case";
+import { structureFromRawText } from "@/lib/structure-er-note";
+import type { ParsedERNote, ParsedHP, ParsedOtherNote, StructuredOutput } from "@/models/case";
+import type { SourceDocumentType } from "@/types/case";
 
 export const runtime = "nodejs";
 
 type RouteCtx = { params: Promise<{ id: string }> };
+
+function suggestedTitleFromOutput(out: StructuredOutput, kind: SourceDocumentType): string {
+  if (kind === "ER_NOTE") {
+    return (out as ParsedERNote).chiefComplaint?.trim() ?? "";
+  }
+  if (kind === "HP_NOTE") {
+    const hp = out as ParsedHP;
+    return hp.chiefComplaint?.trim() ?? hp.hpi?.summary?.trim() ?? "";
+  }
+  return (out as ParsedOtherNote).summary?.trim() ?? "";
+}
 
 export async function POST(request: Request, context: RouteCtx) {
   const { id } = await context.params;
@@ -46,23 +61,44 @@ export async function POST(request: Request, context: RouteCtx) {
     );
   }
 
-  let structuredOutput: ParsedERNote;
+  const existing = await getCaseById(id);
+  const typeOverride = parseDocumentTypeFormOverride(formData.get("documentType"));
+
+  let documentType: SourceDocumentType;
+  let classificationReason: string;
+  let classificationSource: ClassificationSource | "override";
+
+  if (typeOverride) {
+    documentType = typeOverride;
+    classificationReason = "Explicit documentType in form data";
+    classificationSource = "override";
+  } else {
+    const c = await classifyDocumentTypeWithGpt({
+      fileName: file.name,
+      caseTitle: existing?.title,
+    });
+    documentType = c.type;
+    classificationReason = c.reason;
+    classificationSource = c.source;
+  }
+
+  let structuredOutput: StructuredOutput;
   try {
-    structuredOutput = await structureErNoteFromRawText(rawText);
+    structuredOutput = await structureFromRawText(rawText, documentType);
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Structuring failed";
     return NextResponse.json({ error: msg }, { status: 502 });
   }
 
-  const existing = await getCaseById(id);
-  const chief = structuredOutput.chiefComplaint?.trim() ?? "";
+  const suggested = suggestedTitleFromOutput(structuredOutput, documentType);
   const title =
-    !existing?.title?.trim() && chief ? chief.slice(0, 200) : undefined;
+    !existing?.title?.trim() && suggested ? suggested.slice(0, 200) : undefined;
 
   const ok = await ingestCaseFile(id, {
     fileName: file.name,
     structuredOutput,
     title,
+    type: documentType,
   });
   if (!ok) {
     return NextResponse.json({ error: "Case not found" }, { status: 404 });
@@ -76,5 +112,8 @@ export async function POST(request: Request, context: RouteCtx) {
   return NextResponse.json({
     sourceDocuments: updated?.sourceDocuments ?? [],
     titleApplied: Boolean(title),
+    documentType,
+    classificationReason,
+    classificationSource,
   });
 }

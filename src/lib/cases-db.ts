@@ -6,7 +6,13 @@ import {
   createDraftCaseRecord,
 } from "@/models/case";
 import type { StructuredOutput } from "@/models/case";
-import type { CaseDetail, CaseEditableFields, CaseListItem, SourceDocument } from "@/types/case";
+import type {
+  CaseDetail,
+  CaseEditableFields,
+  CaseListItem,
+  SourceDocument,
+  SourceDocumentType,
+} from "@/types/case";
 
 function dbName() {
   return process.env.MONGODB_DB?.trim() || undefined;
@@ -85,6 +91,7 @@ export async function ingestCaseFile(
     fileName: string;
     structuredOutput: StructuredOutput;
     title?: string;
+    type: SourceDocumentType;
   },
 ): Promise<boolean> {
   if (!ObjectId.isValid(id)) return false;
@@ -92,7 +99,7 @@ export async function ingestCaseFile(
   const db = client.db(dbName());
 
   const entry = {
-    type: "ER_NOTE" as const,
+    type: data.type,
     fileName: data.fileName,
     structuredOutput: data.structuredOutput,
   };

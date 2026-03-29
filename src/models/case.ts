@@ -44,8 +44,6 @@ export type {
   SourceDocumentType,
 } from "@/types/case";
 
-
-
 export type DispositionRecommendation =
   | "ADMIT"
   | "OBSERVE"
@@ -54,202 +52,183 @@ export type DispositionRecommendation =
 export type CaseStatus = "DRAFT" | "GENERATED" | "FINAL";
 
 /**
- * One row from “Vital Signs: This Visit” (matches typical EMR columns).
- * Most fields are optional because rows are often partially blank.
+ * Structured clinical output: **Zod schemas** are the single source of truth.
+ * - Types: `export type X = z.infer<typeof xSchema>`
+ * - LLM prompts: `schema.toJSONSchema()` via {@link schemaToPromptBlock}
+ *
+ * Plain TypeScript `interface` cannot produce runtime JSON Schema without extra tooling.
  */
-export interface VitalSign {
-  /** Date/time of this set (ISO string or EMR display, e.g. "02/08/2026 15:00") */
-  dateTime: string;
-  /** Blood pressure, e.g. "105/67" */
-  bpMmHg?: string;
-  /** e.g. "Lying/Right Arm" */
-  bpPosition?: string;
-  /** Mean arterial pressure */
-  mapMmHg?: number;
-  heartRate?: number;
-  pulseSite?: string;
-  /** Respiratory rate */
-  respirationRate?: number;
-  tempCelsius?: number;
-  tempFahrenheit?: number;
-  /** SpO₂ (%) */
-  spo2Percent?: number;
-  /** O₂ flow (L/min) */
-  o2LitersPerMin?: number;
-  /** FiO₂ (fraction or % per source system) */
-  fio2?: string | number;
-  /** End-tidal CO₂ (mmHg) */
-  etco2MmHg?: number;
-  /** e.g. "Room Air 21%" */
-  o2Device?: string;
-  bloodSugar?: string | number;
-  painScore?: string | number;
-  heightInches?: number;
-  heightCm?: number;
-  weightKg?: number;
-  /** Combined lbs/oz display when provided by EMR */
-  weightLbsOz?: string;
-  scale?: string;
-  bmi?: number;
-  /** Body surface area */
-  bsa?: number;
-  headCircumferenceCm?: number;
+
+export const historySchema = z.object({
+  pastMedicalHistory: z.string(),
+  pastSurgicalHistory: z.string(),
+  allergies: z.string(),
+  familyHistory: z.string(),
+  socialHistory: z.string(),
+  medications: z.string(),
+});
+export type History = z.infer<typeof historySchema>;
+
+export const vitalSignSchema = z.object({
+  dateTime: z.string(),
+  bpMmHg: z.string().optional(),
+  bpPosition: z.string().optional(),
+  mapMmHg: z.number().optional(),
+  heartRate: z.number().optional(),
+  pulseSite: z.string().optional(),
+  respirationRate: z.number().optional(),
+  tempCelsius: z.number().optional(),
+  tempFahrenheit: z.number().optional(),
+  spo2Percent: z.number().optional(),
+  o2LitersPerMin: z.number().optional(),
+  fio2: z.union([z.string(), z.number()]).optional(),
+  etco2MmHg: z.number().optional(),
+  o2Device: z.string().optional(),
+  bloodSugar: z.union([z.string(), z.number()]).optional(),
+  painScore: z.union([z.string(), z.number()]).optional(),
+  heightInches: z.number().optional(),
+  heightCm: z.number().optional(),
+  weightKg: z.number().optional(),
+  weightLbsOz: z.string().optional(),
+  scale: z.string().optional(),
+  bmi: z.number().optional(),
+  bsa: z.number().optional(),
+  headCircumferenceCm: z.number().optional(),
+});
+export type VitalSign = z.infer<typeof vitalSignSchema>;
+
+export const physicalExamSchema = z.object({
+  generalAppearance: z.string(),
+  heent: z.string(),
+  neck: z.string(),
+  lungs: z.string(),
+  heart: z.string(),
+  abdomen: z.string(),
+  extremities: z.string(),
+  neurologic: z.string(),
+  vascular: z.string(),
+  skin: z.string(),
+  psych: z.string(),
+});
+export type PhysicalExam = z.infer<typeof physicalExamSchema>;
+
+export const labResultSchema = z.object({
+  testName: z.string(),
+  result: z.union([z.string(), z.number()]),
+  units: z.string(),
+  referenceRange: z.string(),
+  isAbnormal: z.boolean(),
+});
+export type LabResult = z.infer<typeof labResultSchema>;
+
+export const criticalCareTimeNoteSchema = z.object({
+  minutes: z.number().optional(),
+  narrative: z.string(),
+});
+
+export const medicalDecisionErCourseSchema = z.object({
+  evaluationAndMonitoring: z.string().optional(),
+  presentationRecap: z.string().optional(),
+  differentialAndReasoning: z.string().optional(),
+  dataReviewAndStudies: z.string().optional(),
+  interventionsAndManagement: z.string().optional(),
+  consultations: z.string().optional(),
+  criticalCareTime: criticalCareTimeNoteSchema.optional(),
+  fullNarrative: z.string().optional(),
+});
+export type MedicalDecisionErCourse = z.infer<typeof medicalDecisionErCourseSchema>;
+export type CriticalCareTimeNote = z.infer<typeof criticalCareTimeNoteSchema>;
+
+export const parsedERNoteSchema = z.object({
+  chiefComplaint: z.string(),
+  hpiSummary: z.string(),
+  history: historySchema,
+  reviewOfSystems: z.string(),
+  vitalsigns: z.array(vitalSignSchema),
+  physicalExam: physicalExamSchema,
+  labResults: z.array(labResultSchema),
+  medicalDecisionErCourse: medicalDecisionErCourseSchema,
+  clinicalImpression: z.array(z.string()),
+  condition: z.string(),
+  disposition: z.string(),
+});
+export type ParsedERNote = z.infer<typeof parsedERNoteSchema>;
+
+/** ER narrative pass: labs merged separately — `labResults` must be []. */
+export const parsedERNoteBodySchema = parsedERNoteSchema.extend({
+  labResults: z.tuple([]),
+});
+
+const hpiHpSchema = z.object({
+  summary: z.string().optional(),
+  timeline: z.array(z.string()).optional(),
+  symptoms: z.array(z.string()).optional(),
+  suspectedTrigger: z.array(z.string()).optional(),
+  admissionReason: z.array(z.string()).optional(),
+});
+
+const rosHpSchema = z.object({
+  summary: z.string().optional(),
+});
+
+const assessmentPlanHpSchema = z.object({
+  problems: z.array(
+    z.object({
+      diagnosis: z.string(),
+      qualifiers: z.array(z.string()).optional(),
+      planItems: z.array(z.string()),
+    }),
+  ),
+});
+
+const encounterMetadataHpSchema = z.object({
+  historyExamLevel: z.string().optional(),
+  medicalDecisionMakingLevel: z.string().optional(),
+  severityOfCondition: z.string().optional(),
+  physicianTimeMinutes: z.number().optional(),
+  counselingCoordinationCare: z.boolean().optional(),
+  timeNote: z.string().optional(),
+});
+
+export const parsedHPSchema = z.object({
+  date: z.string().optional(),
+  chiefComplaint: z.string().optional(),
+  hpi: hpiHpSchema.optional(),
+  reviewOfSystems: rosHpSchema.optional(),
+  history: historySchema.optional(),
+  vitalsigns: z.array(vitalSignSchema).optional(),
+  physicalExam: physicalExamSchema.optional(),
+  labResults: z.array(labResultSchema).optional(),
+  ekgInterpretation: z.string().optional(),
+  assessmentPlan: assessmentPlanHpSchema.optional(),
+  encounterMetadata: encounterMetadataHpSchema.optional(),
+  certification: z.string().optional(),
+});
+export type ParsedHP = z.infer<typeof parsedHPSchema>;
+
+/** HP narrative pass when labs are extracted separately. */
+export const parsedHPBodySchema = parsedHPSchema.extend({
+  labResults: z.tuple([]),
+});
+
+export const labResultsWrapperSchema = z.object({
+  labResults: z.array(labResultSchema),
+});
+
+export const parsedOtherNoteSchema = z.object({
+  summary: z.string(),
+});
+export type ParsedOtherNote = z.infer<typeof parsedOtherNoteSchema>;
+
+/** @deprecated Use ParsedOtherNote */
+export type ParsedHPNote = ParsedOtherNote;
+
+export type StructuredOutput = ParsedERNote | ParsedHP | ParsedOtherNote;
+
+/** JSON Schema text for LLM system prompts (Zod 4 `toJSONSchema`). */
+export function schemaToPromptBlock(schema: z.ZodType): string {
+  return JSON.stringify(schema.toJSONSchema(), null, 2);
 }
-/**
- * Physical exam by system (typical ER narrative template).
- * Each field holds free text for that heading (may be empty if not examined).
- */
-export interface PhysicalExam {
-  generalAppearance: string;
-  heent: string;
-  neck: string;
-  lungs: string;
-  /** Auscultation, heart sounds, peripheral pulses / cap refill / turgor as one block */
-  heart: string;
-  abdomen: string;
-  extremities: string;
-  neurologic: string;
-  vascular: string;
-  skin: string;
-  /** Mentation / psychiatric (e.g. alert, oriented, affect) */
-  psych: string;
-}
-export interface LabResult {
-  testName: string;
-  result: string | number;
-  units: string;
-  referenceRange: string;
-  isAbnormal: boolean;
-}
-
-/** Critical care / time-based documentation (when applicable) */
-export interface CriticalCareTimeNote {
-  minutes?: number;
-  /** Full prose for billing context (interventions, discussions, exclusions) */
-  narrative: string;
-}
-
-export interface ExpertInterpretation {
-  ekgInterpretation?: string;
-
-  assessmentPlan?: {
-    problems: {
-      diagnosis: string;
-      qualifiers?: string[];
-      planItems: string[];
-    }[];
-  };
-
-  encounterMetadata?: {
-    historyExamLevel?: string;
-    medicalDecisionMakingLevel?: string;
-    severityOfCondition?: string;
-    physicianTimeMinutes?: number;
-    counselingCoordinationCare?: boolean;
-    timeNote?: string;
-  };
-}
-
-/**
- * MEDICAL DECISION / PROCEDURES / ER COURSE — structured buckets; use `fullNarrative`
- * for a single pasted block if you do not split the source.
- */
-export interface MedicalDecisionErCourse {
-  /** e.g. room placement, evaluated immediately, reassessment cadence */
-  evaluationAndMonitoring?: string;
-  /** Presentation as framed in MDM (demographics, vitals, pertinent exam) */
-  presentationRecap?: string;
-  /** Differential and clinical reasoning (may include “not limited to…”, what-ifs ruled out) */
-  differentialAndReasoning?: string;
-  /** Labs, imaging, ABG, troponin, etc. */
-  dataReviewAndStudies?: string;
-  /** ED therapeutics (fluids, meds, drips) and response framing */
-  interventionsAndManagement?: string;
-  /** Consultations, handoffs, admissions discussions */
-  consultations?: string;
-  criticalCareTime?: CriticalCareTimeNote;
-  /** Optional: entire section as one string from EMR export */
-  fullNarrative?: string;
-}
-export interface history {
-  pastMedicalHistory: string;
-  pastSurgicalHistory: string;
-  allergies: string;
-  familyHistory: string;
-  socialHistory: string;
-  medications: string;
-}
-
-
-export interface ParsedERNote {
-  chiefComplaint: string;
-  hpiSummary: string;
-  /** Past Medical History */
-  history: history;
-  /** Review of Systems (ROS) — e.g. pertinent positives/negatives in HPI; remaining systems negative */
-  reviewOfSystems: string;
-  /** Vital signs for this visit (one or more EMR rows) */
-  vitalsigns: VitalSign[];
-  physicalExam: PhysicalExam;
-  labResults: LabResult[];
-  medicalDecisionErCourse: MedicalDecisionErCourse;
-
-  clinicalImpression: string[];
-  condition: string;
-  disposition: string;
-}
-
-export interface ParsedHP {
-  date?: string;
-
-  chiefComplaint?: string;
-
-  hpi?: {
-    summary?: string;
-    timeline?: string[];
-    symptoms?: string[];
-    suspectedTrigger?: string[];
-    admissionReason?: string;
-  };
-
-  reviewOfSystems?: {
-    summary?: string;
-  };
-
-  history?: history;
-
-  vitalsigns?: VitalSign[];
-
-  physicalExam?: PhysicalExam;
-
-  labResults?: LabResult[];
-
-  ekgInterpretation?: string;
-
-  assessmentPlan?: {
-    problems: {
-      diagnosis: string;
-      qualifiers?: string[];
-      planItems: string[];
-    }[];
-  };
-
-  encounterMetadata?: {
-    historyExamLevel?: string;
-    medicalDecisionMakingLevel?: string;
-    severityOfCondition?: string;
-    physicianTimeMinutes?: number;
-    counselingCoordinationCare?: boolean;
-    timeNote?: string;
-  };
-
-    certification?: string;
-}
-export interface ParsedHPNote {
-  summary: string;
-}
-
-export type StructuredOutput = ParsedERNote | ParsedHPNote;
 
 export interface CaseModel {
   _id?: string;
@@ -257,9 +236,6 @@ export interface CaseModel {
   status: CaseStatus;
 
   sourceDocuments: SourceDocument[];
-
-  // generatedOutput?: StructuredOutput;
-  // editedOutput?: StructuredOutput;
 
   isEdited: boolean;
 

@@ -1,22 +1,82 @@
 import OpenAI from "openai";
-import type { LabResult, ParsedERNote } from "@/models/case";
+import {
+  labResultsWrapperSchema,
+  parsedERNoteBodySchema,
+  parsedHPBodySchema,
+  parsedOtherNoteSchema,
+  schemaToPromptBlock,
+  type LabResult,
+  type ParsedERNote,
+  type ParsedHP,
+  type ParsedOtherNote,
+  type StructuredOutput,
+} from "@/models/case";
+import type { SourceDocumentType } from "@/types/case";
 import { splitNoteBodyAndLabs } from "@/lib/split-note-body-and-labs";
 
-const LAB_RESULTS_ONLY_SYSTEM = `You are a clinical data extractor. Output ONE JSON object only (no markdown):
+function readMaxCompletionTokens(): number {
+  const rawEnv = process.env.OPENAI_MAX_COMPLETION_TOKENS?.trim();
+  if (rawEnv) {
+    const n = Number.parseInt(rawEnv, 10);
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  return 16_384;
+}
 
-{ "labResults": Array<{
-  "testName": string,
-  "result": string | number,
-  "units": string,
-  "referenceRange": string,
-  "isAbnormal": boolean
-}> }
+function labResultsOnlySystemPrompt(): string {
+  return `You are a clinical data extractor. Output ONE JSON object only (no markdown).
+
+The output must conform to this JSON Schema:
+
+${schemaToPromptBlock(labResultsWrapperSchema)}
 
 Rules:
 - Include one object per distinct laboratory result line or table row in the source (CBC, BMP/CMP, coags, ABG/VBG, cardiac enzymes, lactate, troponin, etc.). Preserve the order they appear.
-- Do not summarize, merge unlike rows, or cap the count. If the note lists 40 tests, return 40 objects.
+- Do not summarize, merge unlike rows, or cap the count.
 - Use "" for missing units or reference range. Set isAbnormal from flags (H/L/critical) when present, otherwise false.
 - If there are no labs, return { "labResults": [] }.`;
+}
+
+function erNoteBodySystemPrompt(): string {
+  return `You are a clinical documentation assistant. Given raw text from an ER / emergency note (possibly OCR or copy-paste), output ONE JSON object only (no markdown).
+
+The output must conform to this JSON Schema:
+
+${schemaToPromptBlock(parsedERNoteBodySchema)}
+
+Rules:
+- Use empty string "" for unknown narrative fields; use [] for arrays when there is no data.
+- vitalsigns: include one row per set in the note; dateTime can be "unknown" if not given.
+- labResults must remain exactly [] (laboratory values are merged from a separate extraction step).
+- medicalDecisionErCourse: split content into the optional subfields when possible; otherwise put everything in fullNarrative.
+- clinicalImpression: list of impression lines as strings (e.g. ["Euglycemic DKA"]).
+- condition and disposition: short phrases (e.g. "critical", "admit to ICU").`;
+}
+
+function hpNoteBodySystemPrompt(): string {
+  return `You are a clinical documentation assistant. Given raw text from a hospital progress note, H&P, or similar inpatient documentation (possibly OCR or copy-paste), output ONE JSON object only (no markdown).
+
+The output must conform to this JSON Schema:
+
+${schemaToPromptBlock(parsedHPBodySchema)}
+
+Rules:
+- Use empty string "" or omit optional sections when unknown.
+- vitalsigns: include rows present in the note when applicable.
+- labResults must remain exactly [] (laboratory values are merged from a separate extraction step).
+- assessmentPlan.problems: include diagnoses and plan items when present in the text.`;
+}
+
+function otherNoteSystemPrompt(): string {
+  return `You are a clinical documentation assistant. Given raw clinical text, output ONE JSON object only (no markdown).
+
+The output must conform to this JSON Schema:
+
+${schemaToPromptBlock(parsedOtherNoteSchema)}
+
+Rules:
+- summary: concise narrative capture when the document does not fit a specific ER or progress-note template.`;
+}
 
 function coerceLabRow(x: unknown): LabResult | null {
   if (x == null || typeof x !== "object") return null;
@@ -42,7 +102,7 @@ async function extractLabResultsOnly(
     model: process.env.OPENAI_MODEL ?? "gpt-4o-mini",
     response_format: { type: "json_object" },
     messages: [
-      { role: "system", content: LAB_RESULTS_ONLY_SYSTEM },
+      { role: "system", content: labResultsOnlySystemPrompt() },
       {
         role: "user",
         content: `Extract every lab result from the text below.\n\n---\n${rawText}\n---`,
@@ -75,95 +135,18 @@ async function extractLabResultsOnly(
   return out;
 }
 
-const ER_NOTE_JSON_SYSTEM = `You are a clinical documentation assistant. Given raw text from an ER / emergency note (possibly OCR or copy-paste), output ONE JSON object only (no markdown) that matches this TypeScript shape:
-
-{
-  "chiefComplaint": string,
-  "hpiSummary": string,
-  "pastMedicalHistory": string,
-  "pastSurgicalHistory": string,
-  "familyHistory": string,
-  "allergies": string,
-  "medications": string,
-  "socialHistory": string,
-  "ROS": string,
-  "vitalsigns": Array<{
-    "dateTime": string,
-    "bpMmHg"?: string,
-    "bpPosition"?: string,
-    "mapMmHg"?: number,
-    "heartRate"?: number,
-    "pulseSite"?: string,
-    "respirationRate"?: number,
-    "tempCelsius"?: number,
-    "tempFahrenheit"?: number,
-    "spo2Percent"?: number,
-    "o2LitersPerMin"?: number,
-    "fio2"?: string | number,
-    "etco2MmHg"?: number,
-    "o2Device"?: string,
-    "bloodSugar"?: string | number,
-    "painScore"?: string | number,
-    "heightInches"?: number,
-    "heightCm"?: number,
-    "weightKg"?: number,
-    "weightLbsOz"?: string,
-    "scale"?: string,
-    "bmi"?: number,
-    "bsa"?: number,
-    "headCircumferenceCm"?: number
-  }>,
-  "physicalExam": {
-    "generalAppearance": string,
-    "heent": string,
-    "neck": string,
-    "lungs": string,
-    "heart": string,
-    "abdomen": string,
-    "extremities": string,
-    "neurologic": string,
-    "vascular": string,
-    "skin": string,
-    "psych": string
-  },
-  "labResults": [],
-  "medicalDecisionErCourse": {
-    "evaluationAndMonitoring"?: string,
-    "presentationRecap"?: string,
-    "differentialAndReasoning"?: string,
-    "dataReviewAndStudies"?: string,
-    "interventionsAndManagement"?: string,
-    "consultations"?: string,
-    "criticalCareTime"?: { "minutes"?: number, "narrative": string },
-    "fullNarrative"?: string
-  },
-  "clinicalImpression": string[],
-  "condition": string,
-  "disposition": string
-}
-
-Rules:
-- Use empty string "" for unknown narrative fields; use [] for arrays when there is no data.
-- vitalsigns: include one row per set in the note; dateTime can be "unknown" if not given.
-- labResults: MUST always be the empty array []. Laboratory values are parsed in a separate step from dedicated lab text; do not invent or paste labs here.
-- medicalDecisionErCourse: split content into the optional subfields when possible; otherwise put everything in fullNarrative.
-- clinicalImpression: list of impression lines as strings (e.g. ["Euglycemic DKA"]).
-- condition and disposition: short phrases (e.g. "critical", "admit to ICU").`;
-
-async function structureBodyFromText(
+async function callJsonModel(
   openai: OpenAI,
-  bodyText: string,
+  systemPrompt: string,
+  userContent: string,
   maxCompletionTokens: number,
-): Promise<ParsedERNote> {
+): Promise<unknown> {
   const completion = await openai.chat.completions.create({
     model: process.env.OPENAI_MODEL ?? "gpt-4o-mini",
     response_format: { type: "json_object" },
     messages: [
-      { role: "system", content: ER_NOTE_JSON_SYSTEM },
-      {
-        role: "user",
-        content: `Parse the following clinical note excerpt into JSON. This text intentionally omits the laboratory results block (if any); those are processed separately.\n\n---\n${bodyText}\n---`,
-      },
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userContent },
     ],
     temperature: 0.2,
     max_completion_tokens: maxCompletionTokens,
@@ -182,10 +165,30 @@ async function structureBodyFromText(
   }
 
   try {
-    return JSON.parse(raw) as ParsedERNote;
+    return JSON.parse(raw) as unknown;
   } catch {
     throw new Error("Model returned invalid JSON");
   }
+}
+
+async function structureErBodyFromText(
+  openai: OpenAI,
+  bodyText: string,
+  maxCompletionTokens: number,
+): Promise<ParsedERNote> {
+  const userContent = `Parse the following clinical note excerpt into JSON. This text intentionally omits the isolated laboratory block when possible; labs are merged separately.\n\n---\n${bodyText}\n---`;
+  const parsed = await callJsonModel(openai, erNoteBodySystemPrompt(), userContent, maxCompletionTokens);
+  return parsed as ParsedERNote;
+}
+
+async function structureHpBodyFromText(
+  openai: OpenAI,
+  bodyText: string,
+  maxCompletionTokens: number,
+): Promise<ParsedHP> {
+  const userContent = `Parse the following inpatient / progress note excerpt into JSON. Laboratory rows are merged separately.\n\n---\n${bodyText}\n---`;
+  const parsed = await callJsonModel(openai, hpNoteBodySystemPrompt(), userContent, maxCompletionTokens);
+  return parsed as ParsedHP;
 }
 
 export async function structureErNoteFromRawText(rawText: string): Promise<ParsedERNote> {
@@ -199,22 +202,10 @@ export async function structureErNoteFromRawText(rawText: string): Promise<Parse
   const trimmed = rawText.length > maxChars ? rawText.slice(0, maxChars) : rawText;
 
   const { bodyText, labText } = splitNoteBodyAndLabs(trimmed);
-
-  /** Narrative pass: prefer text without the isolated lab block; if split found nothing, use full text. */
   const structureBody = bodyText.trim().length > 0 ? bodyText : trimmed;
-
-  /** Lab pass: isolated lab section when detected; otherwise full note (same as legacy fallback). */
   const labSource = labText.trim().length > 0 ? labText : trimmed;
 
-  const maxCompletionTokens = (() => {
-    const rawEnv = process.env.OPENAI_MAX_COMPLETION_TOKENS?.trim();
-    if (rawEnv) {
-      const n = Number.parseInt(rawEnv, 10);
-      if (Number.isFinite(n) && n > 0) return n;
-    }
-    return 16_384;
-  })();
-
+  const maxCompletionTokens = readMaxCompletionTokens();
   const skipLabRefinement =
     process.env.OPENAI_SKIP_LAB_REFINEMENT === "1" ||
     process.env.OPENAI_SKIP_LAB_REFINEMENT === "true";
@@ -223,9 +214,77 @@ export async function structureErNoteFromRawText(rawText: string): Promise<Parse
     ? Promise.resolve([])
     : extractLabResultsOnly(openai, labSource, maxCompletionTokens).catch(() => []);
 
-  const bodyPromise = structureBodyFromText(openai, structureBody, maxCompletionTokens);
+  const bodyPromise = structureErBodyFromText(openai, structureBody, maxCompletionTokens);
 
   const [parsed, labs] = await Promise.all([bodyPromise, labPromise]);
 
   return { ...parsed, labResults: labs };
+}
+
+export async function structureHpNoteFromRawText(rawText: string): Promise<ParsedHP> {
+  const key = process.env.OPENAI_API_KEY;
+  if (!key?.trim()) {
+    throw new Error("Missing OPENAI_API_KEY");
+  }
+
+  const openai = new OpenAI({ apiKey: key });
+  const maxChars = 120_000;
+  const trimmed = rawText.length > maxChars ? rawText.slice(0, maxChars) : rawText;
+
+  const { bodyText, labText } = splitNoteBodyAndLabs(trimmed);
+  const structureBody = bodyText.trim().length > 0 ? bodyText : trimmed;
+  const labSource = labText.trim().length > 0 ? labText : trimmed;
+
+  const maxCompletionTokens = readMaxCompletionTokens();
+  const skipLabRefinement =
+    process.env.OPENAI_SKIP_LAB_REFINEMENT === "1" ||
+    process.env.OPENAI_SKIP_LAB_REFINEMENT === "true";
+
+  const labPromise: Promise<LabResult[]> = skipLabRefinement
+    ? Promise.resolve([])
+    : extractLabResultsOnly(openai, labSource, maxCompletionTokens).catch(() => []);
+
+  const bodyPromise = structureHpBodyFromText(openai, structureBody, maxCompletionTokens);
+
+  const [parsed, labs] = await Promise.all([bodyPromise, labPromise]);
+
+  const merged: ParsedHP = { ...parsed };
+  if (labs.length > 0) {
+    merged.labResults = labs;
+  }
+  return merged;
+}
+
+export async function structureOtherNoteFromRawText(rawText: string): Promise<ParsedOtherNote> {
+  const key = process.env.OPENAI_API_KEY;
+  if (!key?.trim()) {
+    throw new Error("Missing OPENAI_API_KEY");
+  }
+
+  const openai = new OpenAI({ apiKey: key });
+  const maxChars = 120_000;
+  const trimmed = rawText.length > maxChars ? rawText.slice(0, maxChars) : rawText;
+  const maxCompletionTokens = readMaxCompletionTokens();
+
+  const userContent = `Summarize and structure the following text.\n\n---\n${trimmed}\n---`;
+  const parsed = await callJsonModel(openai, otherNoteSystemPrompt(), userContent, maxCompletionTokens);
+  return parsed as ParsedOtherNote;
+}
+
+/**
+ * Routes to the correct schema / pipeline from {@link SourceDocumentType}.
+ */
+export async function structureFromRawText(
+  rawText: string,
+  kind: SourceDocumentType,
+): Promise<StructuredOutput> {
+  switch (kind) {
+    case "HP_NOTE":
+      return structureHpNoteFromRawText(rawText);
+    case "OTHER":
+      return structureOtherNoteFromRawText(rawText);
+    case "ER_NOTE":
+    default:
+      return structureErNoteFromRawText(rawText);
+  }
 }
