@@ -5,6 +5,7 @@ export type {
   CaseListItem,
   CaseStoredFields,
   CaseStructuredRawData,
+  CaseStructuredRawDataPersisted,
   SourceDocument,
   SourceDocumentType,
 } from "./case";

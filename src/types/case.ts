@@ -1,7 +1,7 @@
 import type { ObjectId } from "mongodb";
-import type { CaseStructuredRawData } from "@/models/case";
+import type { CaseStructuredRawData, CaseStructuredRawDataPersisted } from "@/models/case";
 
-export type { CaseStructuredRawData };
+export type { CaseStructuredRawData, CaseStructuredRawDataPersisted };
 
 export type SourceDocumentType = "ER_NOTE" | "HP_NOTE" | "OTHER";
 
@@ -24,8 +24,8 @@ export type CaseStoredFields = CaseEditableFields & {
   createdAt: Date;
   updatedAt: Date;
   sourceDocuments: SourceDocument[];
-  /** Denormalized HPI-oriented aggregate; rebuilt when sources change */
-  structuredRawData?: CaseStructuredRawData;
+  /** Merged HPI layer only (no duplicate per-source snapshots; use `sourceDocuments`) */
+  structuredRawData?: CaseStructuredRawDataPersisted;
 };
 
 /** Document as returned from MongoDB */
@@ -38,7 +38,7 @@ export type CaseDetail = CaseEditableFields & {
   id: string;
   updatedAt: Date;
   sourceDocuments: SourceDocument[];
-  structuredRawData: CaseStructuredRawData;
+  structuredRawData: CaseStructuredRawDataPersisted;
 };
 
 /** Row in the cases list */

@@ -1,5 +1,5 @@
 import { rebuildStructuredRawDataFromDocuments } from "@/lib/structured-raw-data";
-import { emptyStructuredRawData, type MergedForHpi } from "@/models/case";
+import { emptyStructuredRawPersisted, type MergedForHpi } from "@/models/case";
 import type { SourceDocument } from "@/types/case";
 
 const PRIMARY_FIELDS: { key: keyof MergedForHpi; label: string }[] = [
@@ -58,7 +58,7 @@ export function MergedHpiSummary({
   const m =
     sourceDocuments != null && sourceDocuments.length > 0
       ? rebuildStructuredRawDataFromDocuments(sourceDocuments).mergedForHpi
-      : (merged ?? emptyStructuredRawData().mergedForHpi);
+      : (merged ?? emptyStructuredRawPersisted().mergedForHpi);
   return (
     <div className="flex flex-col gap-6">
       <div>

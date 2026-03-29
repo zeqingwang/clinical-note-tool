@@ -95,12 +95,17 @@ export const mergedForHpiSchema = z.object({
 });
 export type MergedForHpi = z.infer<typeof mergedForHpiSchema>;
 
-export const caseStructuredRawDataSchema = z.object({
+/** Stored on the case document: merged summary only (no per-file duplicate of `sourceDocuments`). */
+export const caseStructuredRawDataPersistedSchema = z.object({
   version: z.literal(2),
-  /** ISO timestamp of last rebuild */
   updatedAt: z.string(),
-  sources: z.array(sourceStructuredSnapshotSchema),
   mergedForHpi: mergedForHpiSchema,
+});
+export type CaseStructuredRawDataPersisted = z.infer<typeof caseStructuredRawDataPersistedSchema>;
+
+/** In-memory / API: optional `sources` for recomputation; never persist `sources` to MongoDB. */
+export const caseStructuredRawDataSchema = caseStructuredRawDataPersistedSchema.extend({
+  sources: z.array(sourceStructuredSnapshotSchema).optional(),
 });
 export type CaseStructuredRawData = z.infer<typeof caseStructuredRawDataSchema>;
 
@@ -122,13 +127,17 @@ const emptyMergedForHpi = (): MergedForHpi => ({
   vitalsMarkdown: "",
 });
 
-export function emptyStructuredRawData(now: Date = new Date()): CaseStructuredRawData {
-  return caseStructuredRawDataSchema.parse({
+export function emptyStructuredRawPersisted(now: Date = new Date()): CaseStructuredRawDataPersisted {
+  return caseStructuredRawDataPersistedSchema.parse({
     version: 2,
     updatedAt: now.toISOString(),
-    sources: [],
     mergedForHpi: emptyMergedForHpi(),
   });
+}
+
+/** @deprecated Use {@link emptyStructuredRawPersisted} (persisted shape has no `sources`). */
+export function emptyStructuredRawData(now: Date = new Date()): CaseStructuredRawDataPersisted {
+  return emptyStructuredRawPersisted(now);
 }
 
 /** Fields persisted on every case document */
@@ -138,7 +147,7 @@ export const caseStoredFieldsSchema: z.ZodType<CaseStoredFields> = z.object({
   createdAt: z.date(),
   updatedAt: z.date(),
   sourceDocuments: z.array(sourceDocumentSchema),
-  structuredRawData: caseStructuredRawDataSchema.optional(),
+  structuredRawData: caseStructuredRawDataPersistedSchema.optional(),
 });
 
 /** User-editable fields (form / API body) */
@@ -154,7 +163,7 @@ export function createDraftCaseRecord(now: Date = new Date()): CaseStoredFields 
     createdAt: now,
     updatedAt: now,
     sourceDocuments: [],
-    structuredRawData: emptyStructuredRawData(now),
+    structuredRawData: emptyStructuredRawPersisted(now),
   });
 }
 

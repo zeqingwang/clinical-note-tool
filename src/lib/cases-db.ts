@@ -1,11 +1,14 @@
 import { ObjectId, type Document, type UpdateFilter } from "mongodb";
 import clientPromise from "@/lib/mongodb";
-import { rebuildStructuredRawDataFromDocuments } from "@/lib/structured-raw-data";
+import {
+  normalizeStructuredRawData,
+  persistStructuredRawFromDocuments,
+} from "@/lib/structured-raw-data";
 import {
   CASE_COLLECTION,
   caseEditableFieldsSchema,
   createDraftCaseRecord,
-  emptyStructuredRawData,
+  emptyStructuredRawPersisted,
 } from "@/models/case";
 import type { StructuredOutput } from "@/models/case";
 import type {
@@ -80,11 +83,19 @@ export async function getCaseById(id: string): Promise<CaseDetail | null> {
   if (!doc) return null;
   const sourceDocuments = normalizeSourceDocuments(doc);
   const updatedAt = doc.updatedAt instanceof Date ? doc.updatedAt : new Date(0);
-  /** Always derive from every saved `sourceDocument` so merged HPI never reflects only a stale/partial DB blob. */
-  const structuredRawData =
-    sourceDocuments.length > 0
-      ? rebuildStructuredRawDataFromDocuments(sourceDocuments, updatedAt)
-      : emptyStructuredRawData(updatedAt);
+  /** Prefer recomputing merge from all `structuredOutput` values; on failure fall back to stored `structuredRawData`. */
+  let structuredRawData;
+  try {
+    structuredRawData =
+      sourceDocuments.length > 0
+        ? persistStructuredRawFromDocuments(sourceDocuments, updatedAt)
+        : emptyStructuredRawPersisted(updatedAt);
+  } catch {
+    structuredRawData =
+      doc.structuredRawData != null
+        ? normalizeStructuredRawData(doc.structuredRawData)
+        : emptyStructuredRawPersisted(updatedAt);
+  }
 
   return {
     id: (doc._id as ObjectId).toHexString(),
@@ -136,7 +147,7 @@ export async function ingestCaseFile(
   )) as Document | null;
   if (!after) return false;
 
-  const structuredRawData = rebuildStructuredRawDataFromDocuments(
+  const structuredRawData = persistStructuredRawFromDocuments(
     normalizeSourceDocuments(after),
     after.updatedAt instanceof Date ? after.updatedAt : new Date(),
   );
@@ -189,7 +200,7 @@ export async function removeSourceDocumentAtIndex(caseId: string, index: number)
   normalized.splice(index, 1);
 
   const updatedAt = new Date();
-  const structuredRawData = rebuildStructuredRawDataFromDocuments(normalized, updatedAt);
+  const structuredRawData = persistStructuredRawFromDocuments(normalized, updatedAt);
 
   const update: UpdateFilter<Document> = {
     $set: {

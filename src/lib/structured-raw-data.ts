@@ -1,11 +1,13 @@
 import { z } from "zod";
 import {
+  caseStructuredRawDataPersistedSchema,
   caseStructuredRawDataSchema,
-  emptyStructuredRawData,
+  emptyStructuredRawPersisted,
   labResultSchema,
   sourceStructuredSnapshotSchema,
   vitalSignSchema,
   type CaseStructuredRawData,
+  type CaseStructuredRawDataPersisted,
   type LabResult,
   type MergedForHpi,
   type PhysicalExam,
@@ -261,17 +263,34 @@ function snapshotFromSourceDocument(sd: SourceDocument): SourceStructuredSnapsho
   };
 }
 
-/** Rebuilds the summarized layer from **every** current `sourceDocument` (add = append to array; remove = re-merge remaining). */
+/**
+ * In-memory merge from every `sourceDocument` (includes transient `sources` for callers that need snapshots).
+ * **Persist to MongoDB** with {@link persistStructuredRawFromDocuments} (omits `sources`).
+ */
 export function rebuildStructuredRawDataFromDocuments(
   sourceDocuments: SourceDocument[],
   updatedAt: Date = new Date(),
 ): CaseStructuredRawData {
   const sources = sourceDocuments.map(snapshotFromSourceDocument);
+  /** Avoid `.parse()` here: live `structuredOutput` from the model may not match snapshot Zod yet; throwing would 500 GET. */
   return {
     version: 2,
     updatedAt: updatedAt.toISOString(),
     sources,
     mergedForHpi: mergeSnapshotsForHpi(sources),
+  };
+}
+
+/** Writes only `mergedForHpi` (+ version/updatedAt); structured clinical rows stay in `sourceDocuments` only. */
+export function persistStructuredRawFromDocuments(
+  sourceDocuments: SourceDocument[],
+  updatedAt: Date = new Date(),
+): CaseStructuredRawDataPersisted {
+  const full = rebuildStructuredRawDataFromDocuments(sourceDocuments, updatedAt);
+  return {
+    version: full.version,
+    updatedAt: full.updatedAt,
+    mergedForHpi: full.mergedForHpi,
   };
 }
 
@@ -294,11 +313,10 @@ const caseStructuredRawDataV1Schema = z.object({
 
 function migrateV1ToV2(
   v1: z.infer<typeof caseStructuredRawDataV1Schema>,
-): CaseStructuredRawData {
+): CaseStructuredRawDataPersisted {
   return {
     version: 2,
     updatedAt: v1.updatedAt,
-    sources: v1.sources,
     mergedForHpi: mergeSnapshotsForHpi(v1.sources),
   };
 }
@@ -437,7 +455,7 @@ function coerceSnapshotForRead(s: unknown): SourceStructuredSnapshot {
 }
 
 function normalizeMergedForHpiLoose(raw: unknown): MergedForHpi {
-  const base = { ...emptyStructuredRawData().mergedForHpi };
+  const base = { ...emptyStructuredRawPersisted().mergedForHpi };
   if (!raw || typeof raw !== "object") return base;
   const o = raw as Record<string, unknown>;
   for (const k of Object.keys(base) as (keyof MergedForHpi)[]) {
@@ -451,11 +469,27 @@ function normalizeMergedForHpiLoose(raw: unknown): MergedForHpi {
   return base;
 }
 
-export function normalizeStructuredRawData(raw: unknown): CaseStructuredRawData {
+function omitSourcesKey(raw: unknown): unknown {
+  if (raw == null || typeof raw !== "object") return raw;
+  const { sources: _omit, ...rest } = raw as Record<string, unknown>;
+  return rest;
+}
+
+/** Normalize DB or legacy JSON to the **persisted** shape (no `sources`). */
+export function normalizeStructuredRawData(raw: unknown): CaseStructuredRawDataPersisted {
   const sanitized = sanitizeStructuredRawDataInput(raw);
 
-  const v2 = caseStructuredRawDataSchema.safeParse(sanitized);
-  if (v2.success) return v2.data;
+  const v2Persisted = caseStructuredRawDataPersistedSchema.safeParse(omitSourcesKey(sanitized));
+  if (v2Persisted.success) return v2Persisted.data;
+
+  const v2Legacy = caseStructuredRawDataSchema.safeParse(sanitized);
+  if (v2Legacy.success) {
+    return caseStructuredRawDataPersistedSchema.parse({
+      version: v2Legacy.data.version,
+      updatedAt: v2Legacy.data.updatedAt,
+      mergedForHpi: v2Legacy.data.mergedForHpi,
+    });
+  }
 
   const v1 = caseStructuredRawDataV1Schema.safeParse(sanitized);
   if (v1.success) return migrateV1ToV2(v1.data);
@@ -475,23 +509,21 @@ export function normalizeStructuredRawData(raw: unknown): CaseStructuredRawData 
     const sourcesSanitized = sourcesArray.map((s) => coerceSnapshotForRead(s));
 
     if (sourcesSanitized.length > 0) {
-      return {
+      return caseStructuredRawDataPersistedSchema.parse({
         version: 2,
         updatedAt,
-        sources: sourcesSanitized,
         mergedForHpi: mergeSnapshotsForHpi(sourcesSanitized),
-      };
+      });
     }
 
     if (Object.values(mergedFromDb).some((v) => String(v).trim() !== "")) {
-      return {
+      return caseStructuredRawDataPersistedSchema.parse({
         version: 2,
         updatedAt,
-        sources: [],
         mergedForHpi: mergedFromDb,
-      };
+      });
     }
   }
 
-  return emptyStructuredRawData();
+  return emptyStructuredRawPersisted();
 }
