@@ -1,6 +1,10 @@
 import { ObjectId, type Document, type UpdateFilter } from "mongodb";
 import clientPromise from "@/lib/mongodb";
 import {
+  normalizeStructuredRawData,
+  rebuildStructuredRawDataFromDocuments,
+} from "@/lib/structured-raw-data";
+import {
   CASE_COLLECTION,
   caseEditableFieldsSchema,
   createDraftCaseRecord,
@@ -82,6 +86,7 @@ export async function getCaseById(id: string): Promise<CaseDetail | null> {
     content: typeof doc.content === "string" ? doc.content : "",
     updatedAt: doc.updatedAt instanceof Date ? doc.updatedAt : new Date(0),
     sourceDocuments: normalizeSourceDocuments(doc),
+    structuredRawData: normalizeStructuredRawData(doc.structuredRawData),
   };
 }
 
@@ -118,7 +123,22 @@ export async function ingestCaseFile(
   } as unknown as UpdateFilter<Document>;
 
   const result = await db.collection(CASE_COLLECTION).updateOne({ _id: new ObjectId(id) }, update);
-  return result.matchedCount > 0;
+  if (result.matchedCount === 0) return false;
+
+  const after = (await db
+    .collection(CASE_COLLECTION)
+    .findOne({ _id: new ObjectId(id) })) as Document | null;
+  if (!after) return false;
+
+  const structuredRawData = rebuildStructuredRawDataFromDocuments(
+    normalizeSourceDocuments(after),
+    after.updatedAt instanceof Date ? after.updatedAt : new Date(),
+  );
+  await db.collection(CASE_COLLECTION).updateOne(
+    { _id: new ObjectId(id) },
+    { $set: { structuredRawData } },
+  );
+  return true;
 }
 
 export async function updateCase(id: string, data: CaseEditableFields): Promise<boolean> {
@@ -162,10 +182,14 @@ export async function removeSourceDocumentAtIndex(caseId: string, index: number)
   if (index >= normalized.length) return false;
   normalized.splice(index, 1);
 
+  const updatedAt = new Date();
+  const structuredRawData = rebuildStructuredRawDataFromDocuments(normalized, updatedAt);
+
   const update: UpdateFilter<Document> = {
     $set: {
       sourceDocuments: normalized,
-      updatedAt: new Date(),
+      updatedAt,
+      structuredRawData,
     },
   };
   if (normalized.length === 0) {

@@ -4,6 +4,7 @@ export type {
   CaseEditableFields,
   CaseListItem,
   CaseStoredFields,
+  CaseStructuredRawData,
   SourceDocument,
   SourceDocumentType,
 } from "./case";

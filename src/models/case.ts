@@ -9,6 +9,126 @@ const sourceDocumentSchema = z.object({
   structuredOutput: z.unknown(),
 });
 
+export const vitalSignSchema = z.object({
+  dateTime: z.string(),
+  bpMmHg: z.string().optional(),
+  bpPosition: z.string().optional(),
+  mapMmHg: z.number().optional(),
+  heartRate: z.number().optional(),
+  pulseSite: z.string().optional(),
+  respirationRate: z.number().optional(),
+  tempCelsius: z.number().optional(),
+  tempFahrenheit: z.number().optional(),
+  spo2Percent: z.number().optional(),
+  o2LitersPerMin: z.number().optional(),
+  fio2: z.union([z.string(), z.number()]).optional(),
+  etco2MmHg: z.number().optional(),
+  o2Device: z.string().optional(),
+  bloodSugar: z.union([z.string(), z.number()]).optional(),
+  painScore: z.union([z.string(), z.number()]).optional(),
+  heightInches: z.number().optional(),
+  heightCm: z.number().optional(),
+  weightKg: z.number().optional(),
+  weightLbsOz: z.string().optional(),
+  scale: z.string().optional(),
+  bmi: z.number().optional(),
+  bsa: z.number().optional(),
+  headCircumferenceCm: z.number().optional(),
+});
+export type VitalSign = z.infer<typeof vitalSignSchema>;
+
+export const labResultSchema = z.object({
+  testName: z.string(),
+  result: z.union([z.string(), z.number()]),
+  units: z.string(),
+  referenceRange: z.string(),
+  isAbnormal: z.boolean(),
+});
+export type LabResult = z.infer<typeof labResultSchema>;
+
+/** One source document flattened for HPI / GPT input (aligned with `StructuredOutput` shapes). */
+export const sourceStructuredSnapshotSchema = z.object({
+  fileName: z.string().optional(),
+  type: z.enum(["ER_NOTE", "HP_NOTE", "OTHER"]),
+  chiefComplaint: z.string().optional(),
+  hpiSummary: z.string().optional(),
+  reviewOfSystems: z.string().optional(),
+  allergies: z.string().optional(),
+  medications: z.string().optional(),
+  labResults: z.array(labResultSchema).optional(),
+  vitalsigns: z.array(vitalSignSchema).optional(),
+  /** Populated for `OTHER` notes */
+  summary: z.string().optional(),
+  /** Per-source normalized clinical layer (merged into `mergedForHpi`) */
+  timeline: z.string().optional(),
+  symptoms: z.string().optional(),
+  positives: z.string().optional(),
+  negatives: z.string().optional(),
+  keyExamFindings: z.string().optional(),
+  diagnosisClues: z.string().optional(),
+  admissionRationale: z.string().optional(),
+});
+export type SourceStructuredSnapshot = z.infer<typeof sourceStructuredSnapshotSchema>;
+
+/**
+ * Summarized clinical layer merged across sources — intended for HPI generation and review.
+ * Primary fields match the clinical prompt; supplementary fields retain raw-ish markdown.
+ */
+export const mergedForHpiSchema = z.object({
+  timeline: z.string(),
+  symptoms: z.string(),
+  positives: z.string(),
+  negatives: z.string(),
+  abnormalLabs: z.string(),
+  keyExamFindings: z.string(),
+  diagnosisClues: z.string(),
+  admissionRationale: z.string(),
+  chiefComplaints: z.string(),
+  hpiNarratives: z.string(),
+  rosCombined: z.string(),
+  allergies: z.string(),
+  medications: z.string(),
+  allLabsMarkdown: z.string(),
+  vitalsMarkdown: z.string(),
+});
+export type MergedForHpi = z.infer<typeof mergedForHpiSchema>;
+
+export const caseStructuredRawDataSchema = z.object({
+  version: z.literal(2),
+  /** ISO timestamp of last rebuild */
+  updatedAt: z.string(),
+  sources: z.array(sourceStructuredSnapshotSchema),
+  mergedForHpi: mergedForHpiSchema,
+});
+export type CaseStructuredRawData = z.infer<typeof caseStructuredRawDataSchema>;
+
+const emptyMergedForHpi = (): MergedForHpi => ({
+  timeline: "",
+  symptoms: "",
+  positives: "",
+  negatives: "",
+  abnormalLabs: "",
+  keyExamFindings: "",
+  diagnosisClues: "",
+  admissionRationale: "",
+  chiefComplaints: "",
+  hpiNarratives: "",
+  rosCombined: "",
+  allergies: "",
+  medications: "",
+  allLabsMarkdown: "",
+  vitalsMarkdown: "",
+});
+
+export function emptyStructuredRawData(now: Date = new Date()): CaseStructuredRawData {
+  return caseStructuredRawDataSchema.parse({
+    version: 2,
+    updatedAt: now.toISOString(),
+    sources: [],
+    mergedForHpi: emptyMergedForHpi(),
+  });
+}
+
 /** Fields persisted on every case document */
 export const caseStoredFieldsSchema: z.ZodType<CaseStoredFields> = z.object({
   title: z.string(),
@@ -16,6 +136,7 @@ export const caseStoredFieldsSchema: z.ZodType<CaseStoredFields> = z.object({
   createdAt: z.date(),
   updatedAt: z.date(),
   sourceDocuments: z.array(sourceDocumentSchema),
+  structuredRawData: caseStructuredRawDataSchema.optional(),
 });
 
 /** User-editable fields (form / API body) */
@@ -31,6 +152,7 @@ export function createDraftCaseRecord(now: Date = new Date()): CaseStoredFields 
     createdAt: now,
     updatedAt: now,
     sourceDocuments: [],
+    structuredRawData: emptyStructuredRawData(now),
   });
 }
 
@@ -69,34 +191,6 @@ export const historySchema = z.object({
 });
 export type History = z.infer<typeof historySchema>;
 
-export const vitalSignSchema = z.object({
-  dateTime: z.string(),
-  bpMmHg: z.string().optional(),
-  bpPosition: z.string().optional(),
-  mapMmHg: z.number().optional(),
-  heartRate: z.number().optional(),
-  pulseSite: z.string().optional(),
-  respirationRate: z.number().optional(),
-  tempCelsius: z.number().optional(),
-  tempFahrenheit: z.number().optional(),
-  spo2Percent: z.number().optional(),
-  o2LitersPerMin: z.number().optional(),
-  fio2: z.union([z.string(), z.number()]).optional(),
-  etco2MmHg: z.number().optional(),
-  o2Device: z.string().optional(),
-  bloodSugar: z.union([z.string(), z.number()]).optional(),
-  painScore: z.union([z.string(), z.number()]).optional(),
-  heightInches: z.number().optional(),
-  heightCm: z.number().optional(),
-  weightKg: z.number().optional(),
-  weightLbsOz: z.string().optional(),
-  scale: z.string().optional(),
-  bmi: z.number().optional(),
-  bsa: z.number().optional(),
-  headCircumferenceCm: z.number().optional(),
-});
-export type VitalSign = z.infer<typeof vitalSignSchema>;
-
 export const physicalExamSchema = z.object({
   generalAppearance: z.string(),
   heent: z.string(),
@@ -111,15 +205,6 @@ export const physicalExamSchema = z.object({
   psych: z.string(),
 });
 export type PhysicalExam = z.infer<typeof physicalExamSchema>;
-
-export const labResultSchema = z.object({
-  testName: z.string(),
-  result: z.union([z.string(), z.number()]),
-  units: z.string(),
-  referenceRange: z.string(),
-  isAbnormal: z.boolean(),
-});
-export type LabResult = z.infer<typeof labResultSchema>;
 
 export const criticalCareTimeNoteSchema = z.object({
   minutes: z.number().optional(),

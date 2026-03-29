@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useState, useTransition } from "react";
 import type { CaseDetail, SourceDocument } from "@/types/case";
+import { MergedHpiSummary } from "./merged-hpi-summary";
 import { RawJsonDetails, StructuredOutputView } from "./structured-output-view";
 
 const INGEST_EXPECT_MS = 60_000;
@@ -276,6 +277,13 @@ export default function CaseEditPage() {
         {ingestError ? (
           <p className="text-sm text-red-700 dark:text-red-300">{ingestError}</p>
         ) : null}
+      </section>
+
+      <section
+        aria-labelledby="merged-hpi-heading"
+        className="rounded-xl border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-950/30"
+      >
+        <MergedHpiSummary merged={doc.structuredRawData.mergedForHpi} />
       </section>
 
       {doc.sourceDocuments.length > 0 ? (
