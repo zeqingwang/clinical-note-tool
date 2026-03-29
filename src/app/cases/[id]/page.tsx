@@ -19,6 +19,8 @@ export default function CaseEditPage() {
   const [pending, startTransition] = useTransition();
   const [ingesting, setIngesting] = useState(false);
   const [ingestError, setIngestError] = useState<string | null>(null);
+  const [deletingSourceIndex, setDeletingSourceIndex] = useState<number | null>(null);
+  const [sourceDeleteError, setSourceDeleteError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!id) {
@@ -127,6 +129,38 @@ export default function CaseEditPage() {
     [id, router],
   );
 
+  const onDeleteSource = useCallback(
+    async (index: number, label: string) => {
+      if (!id) return;
+      if (!confirm(`Remove “${label}” from this case? This removes the structured output only.`)) {
+        return;
+      }
+      setSourceDeleteError(null);
+      setDeletingSourceIndex(index);
+      try {
+        const res = await fetch(`/api/cases/${id}/source-documents/${index}`, {
+          method: "DELETE",
+        });
+        if (!res.ok) {
+          const data = (await res.json().catch(() => ({}))) as { error?: string };
+          setSourceDeleteError(data.error ?? `Delete failed (${res.status})`);
+          return;
+        }
+        const refreshed = await fetch(`/api/cases/${id}`);
+        if (refreshed.ok) {
+          const data = (await refreshed.json()) as CaseDetail;
+          setDoc(data);
+          setTitle(data.title);
+          setContent(data.content);
+        }
+        startTransition(() => router.refresh());
+      } finally {
+        setDeletingSourceIndex(null);
+      }
+    },
+    [id, router],
+  );
+
   if (loading) {
     return (
       <div className="mx-auto flex min-h-full max-w-3xl flex-col gap-8 px-6 py-12 text-foreground">
@@ -212,15 +246,35 @@ export default function CaseEditPage() {
           <p className="text-xs text-zinc-600 dark:text-zinc-400">
             Raw uploads are not stored—only the parsed JSON below is saved on each case.
           </p>
+          {sourceDeleteError ? (
+            <p className="text-sm text-red-700 dark:text-red-300">{sourceDeleteError}</p>
+          ) : null}
           {doc.sourceDocuments.map((sd, index) => (
             <details
               key={`${sd.fileName ?? "doc"}-${index}`}
               className="rounded-xl border border-zinc-200 dark:border-zinc-800"
               open={index === doc.sourceDocuments.length - 1}
             >
-              <summary className="cursor-pointer px-4 py-3 text-sm font-medium">
-                {sd.fileName ?? `Document ${index + 1}`}{" "}
-                <span className="font-normal text-zinc-500">({sd.type})</span>
+              <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-sm font-medium [&::-webkit-details-marker]:hidden">
+                <span className="min-w-0">
+                  {sd.fileName ?? `Document ${index + 1}`}{" "}
+                  <span className="font-normal text-zinc-500">({sd.type})</span>
+                </span>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    void onDeleteSource(
+                      index,
+                      sd.fileName ?? `Document ${index + 1}`,
+                    );
+                  }}
+                  disabled={deletingSourceIndex !== null}
+                  className="shrink-0 rounded-lg border border-red-200 bg-white px-3 py-1.5 text-xs font-medium text-red-700 transition-colors hover:bg-red-50 disabled:opacity-50 dark:border-red-900 dark:bg-zinc-950 dark:text-red-300 dark:hover:bg-red-950/40"
+                >
+                  {deletingSourceIndex === index ? "…" : "Delete"}
+                </button>
               </summary>
               <pre className="max-h-[28rem] overflow-auto border-t border-zinc-200 px-4 py-3 text-xs leading-relaxed dark:border-zinc-800">
                 {JSON.stringify(sd.structuredOutput, null, 2)}

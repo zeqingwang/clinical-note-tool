@@ -139,3 +139,32 @@ export async function deleteCase(id: string): Promise<boolean> {
   const result = await db.collection(CASE_COLLECTION).deleteOne({ _id: new ObjectId(id) });
   return result.deletedCount === 1;
 }
+
+/** Remove one entry from the case’s `sourceDocuments` (same ordering as `getCaseById`). */
+export async function removeSourceDocumentAtIndex(caseId: string, index: number): Promise<boolean> {
+  if (!ObjectId.isValid(caseId)) return false;
+  if (!Number.isInteger(index) || index < 0) return false;
+  const client = await clientPromise;
+  const db = client.db(dbName());
+  const doc = (await db
+    .collection(CASE_COLLECTION)
+    .findOne({ _id: new ObjectId(caseId) })) as Document | null;
+  if (!doc) return false;
+
+  const normalized = normalizeSourceDocuments(doc);
+  if (index >= normalized.length) return false;
+  normalized.splice(index, 1);
+
+  const update: UpdateFilter<Document> = {
+    $set: {
+      sourceDocuments: normalized,
+      updatedAt: new Date(),
+    },
+  };
+  if (normalized.length === 0) {
+    update.$unset = { structuredOutput: "" };
+  }
+
+  const result = await db.collection(CASE_COLLECTION).updateOne({ _id: new ObjectId(caseId) }, update);
+  return result.matchedCount > 0;
+}
