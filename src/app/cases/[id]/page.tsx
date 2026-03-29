@@ -9,6 +9,9 @@ import { RawJsonDetails, StructuredOutputView } from "./structured-output-view";
 
 const INGEST_EXPECT_MS = 60_000;
 
+/** Avoid stale case JSON (summary must reflect all current files after ingest/delete). */
+const caseFetchInit: RequestInit = { cache: "no-store" };
+
 export default function CaseEditPage() {
   const router = useRouter();
   const params = useParams();
@@ -39,7 +42,7 @@ export default function CaseEditPage() {
     setLoadError(null);
 
     (async () => {
-      const res = await fetch(`/api/cases/${id}`);
+      const res = await fetch(`/api/cases/${id}`, caseFetchInit);
       if (cancelled) return;
       if (!res.ok) {
         setLoadError(res.status === 404 ? "Case not found" : `Could not load (${res.status})`);
@@ -77,7 +80,7 @@ export default function CaseEditPage() {
         return;
       }
 
-      const refreshed = await fetch(`/api/cases/${id}`);
+      const refreshed = await fetch(`/api/cases/${id}`, caseFetchInit);
       if (refreshed.ok) {
         const data = (await refreshed.json()) as CaseDetail;
         setDoc(data);
@@ -116,6 +119,9 @@ export default function CaseEditPage() {
         const payload = (await res.json().catch(() => ({}))) as {
           error?: string;
           sourceDocuments?: SourceDocument[];
+          structuredRawData?: CaseDetail["structuredRawData"];
+          title?: string;
+          content?: string;
           titleApplied?: boolean;
         };
 
@@ -127,12 +133,18 @@ export default function CaseEditPage() {
 
         setIngestProgress(100);
 
-        const refreshed = await fetch(`/api/cases/${id}`);
+        const refreshed = await fetch(`/api/cases/${id}`, caseFetchInit);
         if (refreshed.ok) {
           const data = (await refreshed.json()) as CaseDetail;
-          setDoc(data);
-          setTitle(data.title);
-          setContent(data.content);
+          setDoc({
+            ...data,
+            sourceDocuments: data.sourceDocuments ?? payload.sourceDocuments,
+            structuredRawData: data.structuredRawData ?? payload.structuredRawData,
+            title: payload.title ?? data.title,
+            content: payload.content ?? data.content,
+          });
+          setTitle(payload.title ?? data.title);
+          setContent(payload.content ?? data.content);
         }
 
         startTransition(() => router.refresh());
@@ -163,10 +175,18 @@ export default function CaseEditPage() {
           setSourceDeleteError(data.error ?? `Delete failed (${res.status})`);
           return;
         }
-        const refreshed = await fetch(`/api/cases/${id}`);
+        const payload = (await res.json().catch(() => ({}))) as {
+          sourceDocuments?: SourceDocument[];
+          structuredRawData?: CaseDetail["structuredRawData"];
+        };
+        const refreshed = await fetch(`/api/cases/${id}`, caseFetchInit);
         if (refreshed.ok) {
           const data = (await refreshed.json()) as CaseDetail;
-          setDoc(data);
+          setDoc({
+            ...data,
+            sourceDocuments: data.sourceDocuments ?? payload.sourceDocuments,
+            structuredRawData: data.structuredRawData ?? payload.structuredRawData,
+          });
           setTitle(data.title);
           setContent(data.content);
         }
@@ -283,7 +303,10 @@ export default function CaseEditPage() {
         aria-labelledby="merged-hpi-heading"
         className="rounded-xl border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-950/30"
       >
-        <MergedHpiSummary merged={doc.structuredRawData.mergedForHpi} />
+        <MergedHpiSummary
+          merged={doc.structuredRawData?.mergedForHpi}
+          sourceDocuments={doc.sourceDocuments}
+        />
       </section>
 
       {doc.sourceDocuments.length > 0 ? (

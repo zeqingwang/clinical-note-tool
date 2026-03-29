@@ -18,7 +18,11 @@ export async function GET(_request: Request, context: RouteCtx) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  return NextResponse.json(doc);
+  return NextResponse.json(doc, {
+    headers: {
+      "Cache-Control": "no-store, must-revalidate",
+    },
+  });
 }
 
 export async function PATCH(request: Request, context: RouteCtx) {

@@ -40,5 +40,10 @@ export async function DELETE(_request: Request, context: RouteCtx) {
   revalidatePath("/cases");
   revalidatePath(`/cases/${id}`);
 
-  return NextResponse.json({ ok: true });
+  const updated = await getCaseById(id);
+  return NextResponse.json({
+    ok: true,
+    sourceDocuments: updated?.sourceDocuments ?? [],
+    structuredRawData: updated?.structuredRawData,
+  });
 }

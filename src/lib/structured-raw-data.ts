@@ -2,11 +2,15 @@ import { z } from "zod";
 import {
   caseStructuredRawDataSchema,
   emptyStructuredRawData,
+  labResultSchema,
   sourceStructuredSnapshotSchema,
+  vitalSignSchema,
   type CaseStructuredRawData,
+  type LabResult,
   type MergedForHpi,
   type PhysicalExam,
   type SourceStructuredSnapshot,
+  type VitalSign,
 } from "@/models/case";
 import type { ParsedERNote, ParsedHP, ParsedOtherNote } from "@/models/case";
 import type { SourceDocument } from "@/types/case";
@@ -112,7 +116,7 @@ function blockFor(
   return parts.join("\n\n");
 }
 
-function mergeSnapshotsForHpi(sources: SourceStructuredSnapshot[]): MergedForHpi {
+export function mergeSnapshotsForHpi(sources: SourceStructuredSnapshot[]): MergedForHpi {
   const chiefParts: string[] = [];
   const hpiParts: string[] = [];
   const rosParts: string[] = [];
@@ -257,6 +261,7 @@ function snapshotFromSourceDocument(sd: SourceDocument): SourceStructuredSnapsho
   };
 }
 
+/** Rebuilds the summarized layer from **every** current `sourceDocument` (add = append to array; remove = re-merge remaining). */
 export function rebuildStructuredRawDataFromDocuments(
   sourceDocuments: SourceDocument[],
   updatedAt: Date = new Date(),
@@ -298,12 +303,195 @@ function migrateV1ToV2(
   };
 }
 
+function sanitizeLabRow(row: unknown): Record<string, unknown> {
+  if (row == null || typeof row !== "object") {
+    return {
+      testName: "",
+      result: "",
+      units: "",
+      referenceRange: "",
+      isAbnormal: false,
+    };
+  }
+  const r = row as Record<string, unknown>;
+  const result = r.result;
+  return {
+    testName: String(r.testName ?? ""),
+    result: typeof result === "number" || typeof result === "string" ? result : String(result ?? ""),
+    units: String(r.units ?? ""),
+    referenceRange: String(r.referenceRange ?? ""),
+    isAbnormal: r.isAbnormal === true || r.isAbnormal === "true",
+  };
+}
+
+function sanitizeVitalRow(row: unknown): Record<string, unknown> {
+  if (row == null || typeof row !== "object") {
+    return { dateTime: "" };
+  }
+  const r = row as Record<string, unknown>;
+  return {
+    ...r,
+    dateTime: r.dateTime != null ? String(r.dateTime) : "",
+  };
+}
+
+function sanitizeSnapshotDeep(s: unknown): unknown {
+  if (s == null || typeof s !== "object") return s;
+  const o = { ...(s as Record<string, unknown>) };
+  if (Array.isArray(o.labResults)) {
+    o.labResults = o.labResults.map(sanitizeLabRow);
+  }
+  if (Array.isArray(o.vitalsigns)) {
+    o.vitalsigns = o.vitalsigns.map(sanitizeVitalRow);
+  }
+  return o;
+}
+
+function sanitizeMergedForHpiKeys(raw: unknown): unknown {
+  if (raw == null || typeof raw !== "object") return raw;
+  const m = { ...(raw as Record<string, unknown>) };
+  for (const k of Object.keys(m)) {
+    const v = m[k];
+    if (typeof v === "number" || typeof v === "boolean") m[k] = String(v);
+  }
+  if (typeof m.labsMarkdown === "string" && (m.allLabsMarkdown === undefined || m.allLabsMarkdown === "")) {
+    m.allLabsMarkdown = m.labsMarkdown;
+  }
+  return m;
+}
+
+function sanitizeStructuredRawDataInput(raw: unknown): unknown {
+  if (raw == null || typeof raw !== "object") return raw;
+  const r = raw as Record<string, unknown>;
+  const out: Record<string, unknown> = { ...r };
+  if (Array.isArray(r.sources)) {
+    out.sources = r.sources.map(sanitizeSnapshotDeep);
+  }
+  if (r.mergedForHpi != null && typeof r.mergedForHpi === "object") {
+    out.mergedForHpi = sanitizeMergedForHpiKeys(r.mergedForHpi);
+  }
+  return out;
+}
+
+function toOptStr(v: unknown): string | undefined {
+  if (v == null) return undefined;
+  const t = String(v).trim();
+  return t === "" ? undefined : t;
+}
+
+function coerceLabResultsArray(raw: unknown): LabResult[] {
+  if (!Array.isArray(raw)) return [];
+  const out: LabResult[] = [];
+  for (const row of raw) {
+    const p = labResultSchema.safeParse(sanitizeLabRow(row));
+    if (p.success) out.push(p.data);
+  }
+  return out;
+}
+
+function coerceVitalsArray(raw: unknown): VitalSign[] {
+  if (!Array.isArray(raw)) return [];
+  const out: VitalSign[] = [];
+  for (const row of raw) {
+    const p = vitalSignSchema.safeParse(sanitizeVitalRow(row));
+    if (p.success) out.push(p.data);
+  }
+  return out;
+}
+
+/** Never drop a source row: lenient parse for DB / API recovery. */
+function coerceSnapshotForRead(s: unknown): SourceStructuredSnapshot {
+  const sanitized = sanitizeSnapshotDeep(s);
+  const p = sourceStructuredSnapshotSchema.safeParse(sanitized);
+  if (p.success) return p.data;
+
+  const o = (s && typeof s === "object" ? s : {}) as Record<string, unknown>;
+  const typeRaw = o.type;
+  const type =
+    typeRaw === "ER_NOTE" || typeRaw === "HP_NOTE" || typeRaw === "OTHER" ? typeRaw : "OTHER";
+
+  const fallback = {
+    type,
+    fileName: typeof o.fileName === "string" ? o.fileName : undefined,
+    chiefComplaint: toOptStr(o.chiefComplaint),
+    hpiSummary: toOptStr(o.hpiSummary),
+    reviewOfSystems: toOptStr(o.reviewOfSystems),
+    allergies: toOptStr(o.allergies),
+    medications: toOptStr(o.medications),
+    labResults: coerceLabResultsArray(o.labResults),
+    vitalsigns: coerceVitalsArray(o.vitalsigns),
+    summary: toOptStr(o.summary),
+    timeline: toOptStr(o.timeline),
+    symptoms: toOptStr(o.symptoms),
+    positives: toOptStr(o.positives),
+    negatives: toOptStr(o.negatives),
+    keyExamFindings: toOptStr(o.keyExamFindings),
+    diagnosisClues: toOptStr(o.diagnosisClues),
+    admissionRationale: toOptStr(o.admissionRationale),
+  };
+
+  const again = sourceStructuredSnapshotSchema.safeParse(fallback);
+  if (again.success) return again.data;
+
+  return sourceStructuredSnapshotSchema.parse({ type: "OTHER", summary: "" });
+}
+
+function normalizeMergedForHpiLoose(raw: unknown): MergedForHpi {
+  const base = { ...emptyStructuredRawData().mergedForHpi };
+  if (!raw || typeof raw !== "object") return base;
+  const o = raw as Record<string, unknown>;
+  for (const k of Object.keys(base) as (keyof MergedForHpi)[]) {
+    const v = o[k];
+    if (typeof v === "string") base[k] = v;
+    else if (typeof v === "number" || typeof v === "boolean") base[k] = String(v);
+  }
+  if (!base.allLabsMarkdown.trim() && typeof o.labsMarkdown === "string") {
+    base.allLabsMarkdown = o.labsMarkdown;
+  }
+  return base;
+}
+
 export function normalizeStructuredRawData(raw: unknown): CaseStructuredRawData {
-  const v2 = caseStructuredRawDataSchema.safeParse(raw);
+  const sanitized = sanitizeStructuredRawDataInput(raw);
+
+  const v2 = caseStructuredRawDataSchema.safeParse(sanitized);
   if (v2.success) return v2.data;
 
-  const v1 = caseStructuredRawDataV1Schema.safeParse(raw);
+  const v1 = caseStructuredRawDataV1Schema.safeParse(sanitized);
   if (v1.success) return migrateV1ToV2(v1.data);
+
+  if (raw != null && typeof raw === "object") {
+    const r = raw as Record<string, unknown>;
+    const updatedAt =
+      typeof r.updatedAt === "string"
+        ? r.updatedAt
+        : r.updatedAt instanceof Date
+          ? r.updatedAt.toISOString()
+          : new Date().toISOString();
+
+    const mergedFromDb = normalizeMergedForHpiLoose(r.mergedForHpi);
+
+    const sourcesArray = Array.isArray(r.sources) ? r.sources : [];
+    const sourcesSanitized = sourcesArray.map((s) => coerceSnapshotForRead(s));
+
+    if (sourcesSanitized.length > 0) {
+      return {
+        version: 2,
+        updatedAt,
+        sources: sourcesSanitized,
+        mergedForHpi: mergeSnapshotsForHpi(sourcesSanitized),
+      };
+    }
+
+    if (Object.values(mergedFromDb).some((v) => String(v).trim() !== "")) {
+      return {
+        version: 2,
+        updatedAt,
+        sources: [],
+        mergedForHpi: mergedFromDb,
+      };
+    }
+  }
 
   return emptyStructuredRawData();
 }

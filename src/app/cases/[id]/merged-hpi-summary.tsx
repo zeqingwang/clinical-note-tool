@@ -1,4 +1,6 @@
-import type { MergedForHpi } from "@/models/case";
+import { rebuildStructuredRawDataFromDocuments } from "@/lib/structured-raw-data";
+import { emptyStructuredRawData, type MergedForHpi } from "@/models/case";
+import type { SourceDocument } from "@/types/case";
 
 const PRIMARY_FIELDS: { key: keyof MergedForHpi; label: string }[] = [
   { key: "timeline", label: "Timeline" },
@@ -26,9 +28,9 @@ function Section({
   text,
 }: {
   label: string;
-  text: string;
+  text: string | undefined;
 }) {
-  const trimmed = text.trim();
+  const trimmed = String(text ?? "").trim();
   return (
     <div className="flex flex-col gap-1.5">
       <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
@@ -45,7 +47,18 @@ function Section({
   );
 }
 
-export function MergedHpiSummary({ merged }: { merged: MergedForHpi }) {
+export function MergedHpiSummary({
+  merged,
+  sourceDocuments,
+}: {
+  merged?: MergedForHpi | null;
+  /** When set, summary is recomputed from every file’s structured output (matches server). */
+  sourceDocuments?: SourceDocument[];
+}) {
+  const m =
+    sourceDocuments != null && sourceDocuments.length > 0
+      ? rebuildStructuredRawDataFromDocuments(sourceDocuments).mergedForHpi
+      : (merged ?? emptyStructuredRawData().mergedForHpi);
   return (
     <div className="flex flex-col gap-6">
       <div>
@@ -53,14 +66,14 @@ export function MergedHpiSummary({ merged }: { merged: MergedForHpi }) {
           Summarized clinical layer
         </h2>
         <p className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
-          Normalized merge across uploaded files for HPI generation. Updates when you add or remove a
-          source document.
+          Normalized merge across uploaded files for HPI generation. Each section lists all current
+          sources ({sourceDocuments?.length ?? 0}).
         </p>
       </div>
 
       <div className="grid gap-6 sm:grid-cols-1">
         {PRIMARY_FIELDS.map(({ key, label }) => (
-          <Section key={key} label={label} text={merged[key]} />
+          <Section key={key} label={label} text={m[key]} />
         ))}
       </div>
 
@@ -70,7 +83,7 @@ export function MergedHpiSummary({ merged }: { merged: MergedForHpi }) {
         </summary>
         <div className="flex flex-col gap-5 border-t border-zinc-200 px-4 py-4 dark:border-zinc-800">
           {SUPPLEMENTARY_FIELDS.map(({ key, label }) => (
-            <Section key={key} label={label} text={merged[key]} />
+            <Section key={key} label={label} text={m[key]} />
           ))}
         </div>
       </details>

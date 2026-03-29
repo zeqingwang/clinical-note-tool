@@ -10,7 +10,8 @@ const sourceDocumentSchema = z.object({
 });
 
 export const vitalSignSchema = z.object({
-  dateTime: z.string(),
+  /** Some extracts omit; required for display merge */
+  dateTime: z.string().optional().default(""),
   bpMmHg: z.string().optional(),
   bpPosition: z.string().optional(),
   mapMmHg: z.number().optional(),
@@ -42,7 +43,8 @@ export const labResultSchema = z.object({
   result: z.union([z.string(), z.number()]),
   units: z.string(),
   referenceRange: z.string(),
-  isAbnormal: z.boolean(),
+  /** Mongo / legacy rows may omit this; treat as false when missing */
+  isAbnormal: z.boolean().optional().default(false),
 });
 export type LabResult = z.infer<typeof labResultSchema>;
 

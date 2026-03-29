@@ -1,13 +1,11 @@
 import { ObjectId, type Document, type UpdateFilter } from "mongodb";
 import clientPromise from "@/lib/mongodb";
-import {
-  normalizeStructuredRawData,
-  rebuildStructuredRawDataFromDocuments,
-} from "@/lib/structured-raw-data";
+import { rebuildStructuredRawDataFromDocuments } from "@/lib/structured-raw-data";
 import {
   CASE_COLLECTION,
   caseEditableFieldsSchema,
   createDraftCaseRecord,
+  emptyStructuredRawData,
 } from "@/models/case";
 import type { StructuredOutput } from "@/models/case";
 import type {
@@ -80,13 +78,21 @@ export async function getCaseById(id: string): Promise<CaseDetail | null> {
     .collection(CASE_COLLECTION)
     .findOne({ _id: new ObjectId(id) })) as Document | null;
   if (!doc) return null;
+  const sourceDocuments = normalizeSourceDocuments(doc);
+  const updatedAt = doc.updatedAt instanceof Date ? doc.updatedAt : new Date(0);
+  /** Always derive from every saved `sourceDocument` so merged HPI never reflects only a stale/partial DB blob. */
+  const structuredRawData =
+    sourceDocuments.length > 0
+      ? rebuildStructuredRawDataFromDocuments(sourceDocuments, updatedAt)
+      : emptyStructuredRawData(updatedAt);
+
   return {
     id: (doc._id as ObjectId).toHexString(),
     title: typeof doc.title === "string" ? doc.title : "",
     content: typeof doc.content === "string" ? doc.content : "",
-    updatedAt: doc.updatedAt instanceof Date ? doc.updatedAt : new Date(0),
-    sourceDocuments: normalizeSourceDocuments(doc),
-    structuredRawData: normalizeStructuredRawData(doc.structuredRawData),
+    updatedAt,
+    sourceDocuments,
+    structuredRawData,
   };
 }
 
@@ -122,12 +128,12 @@ export async function ingestCaseFile(
     $unset: { rawText: "", structuredOutput: "" },
   } as unknown as UpdateFilter<Document>;
 
-  const result = await db.collection(CASE_COLLECTION).updateOne({ _id: new ObjectId(id) }, update);
-  if (result.matchedCount === 0) return false;
-
-  const after = (await db
-    .collection(CASE_COLLECTION)
-    .findOne({ _id: new ObjectId(id) })) as Document | null;
+  /** Single round-trip read-after-write so `sourceDocuments` always includes the new file before rebuild. */
+  const after = (await db.collection(CASE_COLLECTION).findOneAndUpdate(
+    { _id: new ObjectId(id) },
+    update,
+    { returnDocument: "after" },
+  )) as Document | null;
   if (!after) return false;
 
   const structuredRawData = rebuildStructuredRawDataFromDocuments(

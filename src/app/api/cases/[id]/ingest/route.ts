@@ -111,6 +111,12 @@ export async function POST(request: Request, context: RouteCtx) {
 
   return NextResponse.json({
     sourceDocuments: updated?.sourceDocuments ?? [],
+    /** Lets the client refresh the summarized layer without relying on a cached GET */
+    structuredRawData: updated?.structuredRawData,
+    updatedAt:
+      updated?.updatedAt instanceof Date ? updated.updatedAt.toISOString() : updated?.updatedAt,
+    title: updated?.title,
+    content: updated?.content,
     titleApplied: Boolean(title),
     documentType,
     classificationReason,
