@@ -95,10 +95,26 @@ export const mergedForHpiSchema = z.object({
 });
 export type MergedForHpi = z.infer<typeof mergedForHpiSchema>;
 
+/** Payer-oriented quality score for a generated HPI (insurance / UM review). */
+export const generatedHpiScoreSchema = z.object({
+  /** 0–100 overall documentation strength for medical necessity / denial risk */
+  overall: z.number().min(0).max(100),
+  /** Short narrative explaining the score (denial risk, completeness). */
+  summary: z.string(),
+  missingPoints: z.array(z.string()),
+  inconsistencies: z.array(z.string()),
+});
+export type GeneratedHpiScore = z.infer<typeof generatedHpiScoreSchema>;
+
 export const generatedHpiEntrySchema = z.object({
   text: z.string(),
   /** ISO timestamp when this HPI was generated */
   createdAt: z.string(),
+  score: generatedHpiScoreSchema.optional(),
+  /** Actionable improvements to reduce denial risk and align with the clinical summary */
+  improvement: z.string().optional(),
+  /** ISO timestamp when score/improvement was last generated */
+  reviewGeneratedAt: z.string().optional(),
 });
 export type GeneratedHpiEntry = z.infer<typeof generatedHpiEntrySchema>;
 

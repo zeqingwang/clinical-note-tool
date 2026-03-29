@@ -9,12 +9,14 @@ import {
   caseEditableFieldsSchema,
   createDraftCaseRecord,
   emptyStructuredRawPersisted,
+  generatedHpiScoreSchema,
 } from "@/models/case";
 import type { StructuredOutput } from "@/models/case";
 import type {
   CaseDetail,
   CaseEditableFields,
   GeneratedHpiEntry,
+  GeneratedHpiScore,
   CaseListItem,
   SourceDocument,
   SourceDocumentType,
@@ -83,7 +85,18 @@ function normalizeGeneratedHpi(raw: unknown): GeneratedHpiEntry[] {
     if (typeof o.text !== "string") continue;
     const createdAt =
       typeof o.createdAt === "string" && o.createdAt.trim() ? o.createdAt : new Date().toISOString();
-    out.push({ text: o.text, createdAt });
+    const entry: GeneratedHpiEntry = { text: o.text, createdAt };
+    if (o.score != null && typeof o.score === "object") {
+      const sp = generatedHpiScoreSchema.safeParse(o.score);
+      if (sp.success) entry.score = sp.data;
+    }
+    if (typeof o.improvement === "string" && o.improvement.trim()) {
+      entry.improvement = o.improvement;
+    }
+    if (typeof o.reviewGeneratedAt === "string" && o.reviewGeneratedAt.trim()) {
+      entry.reviewGeneratedAt = o.reviewGeneratedAt;
+    }
+    out.push(entry);
   }
   return out;
 }
@@ -133,6 +146,40 @@ export async function deleteGeneratedHpiEntry(
     update,
     { returnDocument: "after" },
   )) as Document | null;
+  if (!after) return null;
+  return normalizeGeneratedHpi(after.generatedHPI);
+}
+
+export async function setGeneratedHpiReview(
+  caseId: string,
+  entry: Pick<GeneratedHpiEntry, "createdAt" | "text">,
+  review: {
+    score: GeneratedHpiScore;
+    improvement: string;
+    reviewGeneratedAt: string;
+  },
+): Promise<GeneratedHpiEntry[] | null> {
+  if (!ObjectId.isValid(caseId)) return null;
+  const client = await clientPromise;
+  const db = client.db(dbName());
+
+  const filter = {
+    _id: new ObjectId(caseId),
+    generatedHPI: { $elemMatch: { createdAt: entry.createdAt, text: entry.text } },
+  };
+  const update = {
+    $set: {
+      "generatedHPI.$[e].score": review.score,
+      "generatedHPI.$[e].improvement": review.improvement,
+      "generatedHPI.$[e].reviewGeneratedAt": review.reviewGeneratedAt,
+      updatedAt: new Date(),
+    },
+  } as unknown as UpdateFilter<Document>;
+
+  const after = (await db.collection(CASE_COLLECTION).findOneAndUpdate(filter, update, {
+    returnDocument: "after",
+    arrayFilters: [{ "e.createdAt": entry.createdAt, "e.text": entry.text }],
+  })) as Document | null;
   if (!after) return null;
   return normalizeGeneratedHpi(after.generatedHPI);
 }

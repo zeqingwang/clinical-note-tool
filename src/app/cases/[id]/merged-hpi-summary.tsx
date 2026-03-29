@@ -73,6 +73,8 @@ export function MergedHpiSummary({
   const [hpiError, setHpiError] = useState<string | null>(null);
   const [deletingKey, setDeletingKey] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [reviewingKey, setReviewingKey] = useState<string | null>(null);
+  const [reviewError, setReviewError] = useState<string | null>(null);
 
   const entryKey = useCallback((e: GeneratedHpiEntry) => `${e.createdAt}\n${e.text}`, []);
 
@@ -120,6 +122,38 @@ export function MergedHpiSummary({
         setDeleteError("Delete request failed");
       } finally {
         setDeletingKey(null);
+      }
+    },
+    [caseId, entryKey, onGeneratedHpiChange],
+  );
+
+  const onReviewHpiEntry = useCallback(
+    async (entry: GeneratedHpiEntry) => {
+      if (!caseId?.trim()) return;
+      setReviewError(null);
+      const key = entryKey(entry);
+      setReviewingKey(key);
+      try {
+        const res = await fetch(`/api/cases/${caseId}/generated-hpi/review`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ createdAt: entry.createdAt, text: entry.text }),
+        });
+        const data = (await res.json().catch(() => ({}))) as {
+          generatedHPI?: GeneratedHpiEntry[];
+          error?: string;
+        };
+        if (!res.ok) {
+          setReviewError(data.error ?? `Review failed (${res.status})`);
+          return;
+        }
+        if (Array.isArray(data.generatedHPI)) {
+          onGeneratedHpiChange?.(data.generatedHPI);
+        }
+      } catch {
+        setReviewError("Review request failed");
+      } finally {
+        setReviewingKey(null);
       }
     },
     [caseId, entryKey, onGeneratedHpiChange],
@@ -180,6 +214,9 @@ export function MergedHpiSummary({
         {deleteError ? (
           <p className="mt-2 text-sm text-red-700 dark:text-red-300">{deleteError}</p>
         ) : null}
+        {reviewError ? (
+          <p className="mt-2 text-sm text-red-700 dark:text-red-300">{reviewError}</p>
+        ) : null}
         {generatedHPI.length > 0 ? (
           <div className="mt-4 flex flex-col gap-2">
             <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
@@ -219,18 +256,36 @@ export function MergedHpiSummary({
                     <span className="min-w-0 flex-1 text-xs text-zinc-600 dark:text-zinc-400">
                       {new Date(entry.createdAt).toLocaleString()}
                     </span>
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        void onDeleteHpiEntry(entry);
-                      }}
-                      disabled={deletingKey !== null}
-                      className="shrink-0 rounded-lg border border-red-200 bg-white px-2.5 py-1 text-xs font-medium text-red-700 transition-colors hover:bg-red-50 disabled:opacity-50 dark:border-red-900 dark:bg-zinc-950 dark:text-red-300 dark:hover:bg-red-950/40"
-                    >
-                      {deletingKey === k ? "…" : "Delete"}
-                    </button>
+                    <div className="flex shrink-0 items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          void onReviewHpiEntry(entry);
+                        }}
+                        disabled={reviewingKey !== null || deletingKey !== null}
+                        className="rounded-lg border border-zinc-300 bg-white px-2.5 py-1 text-xs font-medium text-foreground transition-colors hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-600 dark:bg-zinc-900 dark:hover:bg-zinc-800"
+                      >
+                        {reviewingKey === k
+                          ? "…"
+                          : entry.reviewGeneratedAt
+                            ? "Regenerate review"
+                            : "Review"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          void onDeleteHpiEntry(entry);
+                        }}
+                        disabled={deletingKey !== null || reviewingKey !== null}
+                        className="rounded-lg border border-red-200 bg-white px-2.5 py-1 text-xs font-medium text-red-700 transition-colors hover:bg-red-50 disabled:opacity-50 dark:border-red-900 dark:bg-zinc-950 dark:text-red-300 dark:hover:bg-red-950/40"
+                      >
+                        {deletingKey === k ? "…" : "Delete"}
+                      </button>
+                    </div>
                   </summary>
                   <div className="border-t border-zinc-200 px-3 py-3 text-sm leading-relaxed text-foreground dark:border-zinc-800">
                     {entry.text.split("\n\n").map((para, j) => (
@@ -238,6 +293,69 @@ export function MergedHpiSummary({
                         {para}
                       </p>
                     ))}
+                    {entry.score || entry.improvement ? (
+                      <div className="mt-4 flex flex-col gap-3 rounded-lg border border-amber-200/80 bg-amber-50/50 p-3 dark:border-amber-900/50 dark:bg-amber-950/20">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <span className="text-xs font-semibold uppercase tracking-wide text-amber-900 dark:text-amber-200/90">
+                            Payer / insurance readiness
+                          </span>
+                          {entry.reviewGeneratedAt ? (
+                            <span className="text-xs text-zinc-500 dark:text-zinc-400">
+                              Reviewed {new Date(entry.reviewGeneratedAt).toLocaleString()}
+                            </span>
+                          ) : null}
+                        </div>
+                        <p className="text-xs text-zinc-600 dark:text-zinc-400">
+                          Educational QA to reduce documentation-related denial risk—not a guarantee of
+                          coverage or payment.
+                        </p>
+                        {entry.score ? (
+                          <div className="flex flex-col gap-2">
+                            <div className="flex flex-wrap items-baseline gap-2">
+                              <span className="text-2xl font-semibold tabular-nums text-foreground">
+                                {Math.round(entry.score.overall)}
+                              </span>
+                              <span className="text-sm text-zinc-500 dark:text-zinc-400">/ 100</span>
+                            </div>
+                            <p className="text-sm text-foreground">{entry.score.summary}</p>
+                            {entry.score.missingPoints.length > 0 ? (
+                              <div>
+                                <p className="mb-1 text-xs font-medium text-zinc-600 dark:text-zinc-400">
+                                  Missing or thin points
+                                </p>
+                                <ul className="list-inside list-disc space-y-0.5 text-sm text-foreground">
+                                  {entry.score.missingPoints.map((line, idx) => (
+                                    <li key={idx}>{line}</li>
+                                  ))}
+                                </ul>
+                              </div>
+                            ) : null}
+                            {entry.score.inconsistencies.length > 0 ? (
+                              <div>
+                                <p className="mb-1 text-xs font-medium text-amber-800 dark:text-amber-200/80">
+                                  Inconsistencies
+                                </p>
+                                <ul className="list-inside list-disc space-y-0.5 text-sm text-amber-950 dark:text-amber-100/90">
+                                  {entry.score.inconsistencies.map((line, idx) => (
+                                    <li key={idx}>{line}</li>
+                                  ))}
+                                </ul>
+                              </div>
+                            ) : null}
+                          </div>
+                        ) : null}
+                        {entry.improvement ? (
+                          <div>
+                            <p className="mb-1 text-xs font-medium text-zinc-600 dark:text-zinc-400">
+                              Suggested improvements
+                            </p>
+                            <pre className="whitespace-pre-wrap break-words rounded-md border border-zinc-200 bg-white/80 px-2.5 py-2 text-sm leading-relaxed text-foreground dark:border-zinc-700 dark:bg-zinc-900/60">
+                              {entry.improvement}
+                            </pre>
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : null}
                   </div>
                 </details>
               );

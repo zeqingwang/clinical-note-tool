@@ -7,6 +7,7 @@ export type {
   CaseStructuredRawData,
   CaseStructuredRawDataPersisted,
   GeneratedHpiEntry,
+  GeneratedHpiScore,
   SourceDocument,
   SourceDocumentType,
 } from "./case";

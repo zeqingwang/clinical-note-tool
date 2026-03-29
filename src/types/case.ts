@@ -3,9 +3,15 @@ import type {
   CaseStructuredRawData,
   CaseStructuredRawDataPersisted,
   GeneratedHpiEntry,
+  GeneratedHpiScore,
 } from "@/models/case";
 
-export type { CaseStructuredRawData, CaseStructuredRawDataPersisted, GeneratedHpiEntry };
+export type {
+  CaseStructuredRawData,
+  CaseStructuredRawDataPersisted,
+  GeneratedHpiEntry,
+  GeneratedHpiScore,
+};
 
 export type SourceDocumentType = "ER_NOTE" | "HP_NOTE" | "OTHER";
 
