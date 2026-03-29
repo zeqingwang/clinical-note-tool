@@ -1,7 +1,7 @@
 import { revalidatePath } from "next/cache";
 import { NextResponse } from "next/server";
 import { ObjectId } from "mongodb";
-import { getCaseById, updateCase } from "@/lib/cases-db";
+import { deleteCase, getCaseById, updateCase } from "@/lib/cases-db";
 import { caseEditableFieldsSchema } from "@/models/case";
 
 type RouteCtx = { params: Promise<{ id: string }> };
@@ -50,6 +50,23 @@ export async function PATCH(request: Request, context: RouteCtx) {
 
   revalidatePath("/cases");
   revalidatePath(`/cases/${id}`);
+
+  return NextResponse.json({ ok: true });
+}
+
+export async function DELETE(_request: Request, context: RouteCtx) {
+  const { id } = await context.params;
+
+  if (!ObjectId.isValid(id)) {
+    return NextResponse.json({ error: "Invalid id" }, { status: 400 });
+  }
+
+  const ok = await deleteCase(id);
+  if (!ok) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
+  revalidatePath("/cases");
 
   return NextResponse.json({ ok: true });
 }

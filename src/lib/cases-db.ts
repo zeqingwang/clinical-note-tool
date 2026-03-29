@@ -131,3 +131,11 @@ export async function updateCase(id: string, data: CaseEditableFields): Promise<
   );
   return result.matchedCount > 0;
 }
+
+export async function deleteCase(id: string): Promise<boolean> {
+  if (!ObjectId.isValid(id)) return false;
+  const client = await clientPromise;
+  const db = client.db(dbName());
+  const result = await db.collection(CASE_COLLECTION).deleteOne({ _id: new ObjectId(id) });
+  return result.deletedCount === 1;
+}
