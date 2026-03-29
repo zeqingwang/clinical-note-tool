@@ -129,6 +129,27 @@ export interface CriticalCareTimeNote {
   narrative: string;
 }
 
+export interface ExpertInterpretation {
+  ekgInterpretation?: string;
+
+  assessmentPlan?: {
+    problems: {
+      diagnosis: string;
+      qualifiers?: string[];
+      planItems: string[];
+    }[];
+  };
+
+  encounterMetadata?: {
+    historyExamLevel?: string;
+    medicalDecisionMakingLevel?: string;
+    severityOfCondition?: string;
+    physicianTimeMinutes?: number;
+    counselingCoordinationCare?: boolean;
+    timeNote?: string;
+  };
+}
+
 /**
  * MEDICAL DECISION / PROCEDURES / ER COURSE — structured buckets; use `fullNarrative`
  * for a single pasted block if you do not split the source.
@@ -150,23 +171,23 @@ export interface MedicalDecisionErCourse {
   /** Optional: entire section as one string from EMR export */
   fullNarrative?: string;
 }
-
+export interface history {
+  pastMedicalHistory: string;
+  pastSurgicalHistory: string;
+  allergies: string;
+  familyHistory: string;
+  socialHistory: string;
+  medications: string;
+}
 
 
 export interface ParsedERNote {
   chiefComplaint: string;
   hpiSummary: string;
   /** Past Medical History */
-  pastMedicalHistory: string;
-  /** Past Surgical History */
-  pastSurgicalHistory: string;
-  familyHistory: string;
-  allergies: string;
-  medications: string;
-  /** Social history (SHx) */
-  socialHistory: string;
+  history: history;
   /** Review of Systems (ROS) — e.g. pertinent positives/negatives in HPI; remaining systems negative */
-  ROS: string;
+  reviewOfSystems: string;
   /** Vital signs for this visit (one or more EMR rows) */
   vitalsigns: VitalSign[];
   physicalExam: PhysicalExam;
@@ -176,9 +197,53 @@ export interface ParsedERNote {
   clinicalImpression: string[];
   condition: string;
   disposition: string;
+}
 
+export interface ParsedHP {
+  date?: string;
 
+  chiefComplaint?: string;
 
+  hpi?: {
+    summary?: string;
+    timeline?: string[];
+    symptoms?: string[];
+    suspectedTrigger?: string[];
+    admissionReason?: string;
+  };
+
+  reviewOfSystems?: {
+    summary?: string;
+  };
+
+  history?: history;
+
+  vitalsigns?: VitalSign[];
+
+  physicalExam?: PhysicalExam;
+
+  labResults?: LabResult[];
+
+  ekgInterpretation?: string;
+
+  assessmentPlan?: {
+    problems: {
+      diagnosis: string;
+      qualifiers?: string[];
+      planItems: string[];
+    }[];
+  };
+
+  encounterMetadata?: {
+    historyExamLevel?: string;
+    medicalDecisionMakingLevel?: string;
+    severityOfCondition?: string;
+    physicianTimeMinutes?: number;
+    counselingCoordinationCare?: boolean;
+    timeNote?: string;
+  };
+
+    certification?: string;
 }
 export interface ParsedHPNote {
   summary: string;
