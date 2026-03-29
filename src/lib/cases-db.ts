@@ -14,6 +14,7 @@ import type { StructuredOutput } from "@/models/case";
 import type {
   CaseDetail,
   CaseEditableFields,
+  GeneratedHpiEntry,
   CaseListItem,
   SourceDocument,
   SourceDocumentType,
@@ -73,6 +74,69 @@ function normalizeSourceDocuments(doc: Document): SourceDocument[] {
   return [];
 }
 
+function normalizeGeneratedHpi(raw: unknown): GeneratedHpiEntry[] {
+  if (!Array.isArray(raw)) return [];
+  const out: GeneratedHpiEntry[] = [];
+  for (const item of raw) {
+    if (item == null || typeof item !== "object" || !("text" in item)) continue;
+    const o = item as Record<string, unknown>;
+    if (typeof o.text !== "string") continue;
+    const createdAt =
+      typeof o.createdAt === "string" && o.createdAt.trim() ? o.createdAt : new Date().toISOString();
+    out.push({ text: o.text, createdAt });
+  }
+  return out;
+}
+
+export async function appendGeneratedHpi(caseId: string, text: string): Promise<GeneratedHpiEntry[] | null> {
+  if (!ObjectId.isValid(caseId)) return null;
+  const client = await clientPromise;
+  const db = client.db(dbName());
+  const entry: GeneratedHpiEntry = {
+    text,
+    createdAt: new Date().toISOString(),
+  };
+  const update = {
+    $push: { generatedHPI: entry },
+    $set: { updatedAt: new Date() },
+  } as unknown as UpdateFilter<Document>;
+
+  const after = (await db.collection(CASE_COLLECTION).findOneAndUpdate(
+    { _id: new ObjectId(caseId) },
+    update,
+    { returnDocument: "after" },
+  )) as Document | null;
+  if (!after) return null;
+  return normalizeGeneratedHpi(after.generatedHPI);
+}
+
+export async function deleteGeneratedHpiEntry(
+  caseId: string,
+  entry: Pick<GeneratedHpiEntry, "createdAt" | "text">,
+): Promise<GeneratedHpiEntry[] | null> {
+  if (!ObjectId.isValid(caseId)) return null;
+  const client = await clientPromise;
+  const db = client.db(dbName());
+  const filter = {
+    _id: new ObjectId(caseId),
+    generatedHPI: { $elemMatch: { createdAt: entry.createdAt, text: entry.text } },
+  };
+  const update = {
+    $pull: {
+      generatedHPI: { createdAt: entry.createdAt, text: entry.text },
+    },
+    $set: { updatedAt: new Date() },
+  } as unknown as UpdateFilter<Document>;
+
+  const after = (await db.collection(CASE_COLLECTION).findOneAndUpdate(
+    filter,
+    update,
+    { returnDocument: "after" },
+  )) as Document | null;
+  if (!after) return null;
+  return normalizeGeneratedHpi(after.generatedHPI);
+}
+
 export async function getCaseById(id: string): Promise<CaseDetail | null> {
   if (!ObjectId.isValid(id)) return null;
   const client = await clientPromise;
@@ -104,6 +168,7 @@ export async function getCaseById(id: string): Promise<CaseDetail | null> {
     updatedAt,
     sourceDocuments,
     structuredRawData,
+    generatedHPI: normalizeGeneratedHpi(doc.generatedHPI),
   };
 }
 

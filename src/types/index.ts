@@ -6,6 +6,7 @@ export type {
   CaseStoredFields,
   CaseStructuredRawData,
   CaseStructuredRawDataPersisted,
+  GeneratedHpiEntry,
   SourceDocument,
   SourceDocumentType,
 } from "./case";

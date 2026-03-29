@@ -95,6 +95,13 @@ export const mergedForHpiSchema = z.object({
 });
 export type MergedForHpi = z.infer<typeof mergedForHpiSchema>;
 
+export const generatedHpiEntrySchema = z.object({
+  text: z.string(),
+  /** ISO timestamp when this HPI was generated */
+  createdAt: z.string(),
+});
+export type GeneratedHpiEntry = z.infer<typeof generatedHpiEntrySchema>;
+
 /** Stored on the case document: merged summary only (no per-file duplicate of `sourceDocuments`). */
 export const caseStructuredRawDataPersistedSchema = z.object({
   version: z.literal(2),
@@ -148,6 +155,7 @@ export const caseStoredFieldsSchema: z.ZodType<CaseStoredFields> = z.object({
   updatedAt: z.date(),
   sourceDocuments: z.array(sourceDocumentSchema),
   structuredRawData: caseStructuredRawDataPersistedSchema.optional(),
+  generatedHPI: z.array(generatedHpiEntrySchema).optional(),
 });
 
 /** User-editable fields (form / API body) */
@@ -164,6 +172,7 @@ export function createDraftCaseRecord(now: Date = new Date()): CaseStoredFields 
     updatedAt: now,
     sourceDocuments: [],
     structuredRawData: emptyStructuredRawPersisted(now),
+    generatedHPI: [],
   });
 }
 
