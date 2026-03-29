@@ -1,3 +1,6 @@
+"use client";
+
+import { useCallback, useState } from "react";
 import { rebuildStructuredRawDataFromDocuments } from "@/lib/structured-raw-data";
 import { emptyStructuredRawPersisted, type MergedForHpi } from "@/models/case";
 import type { SourceDocument } from "@/types/case";
@@ -48,9 +51,11 @@ function Section({
 }
 
 export function MergedHpiSummary({
+  caseId,
   merged,
   sourceDocuments,
 }: {
+  caseId?: string;
   merged?: MergedForHpi | null;
   /** When set, summary is recomputed from every file’s structured output (matches server). */
   sourceDocuments?: SourceDocument[];
@@ -59,6 +64,34 @@ export function MergedHpiSummary({
     sourceDocuments != null && sourceDocuments.length > 0
       ? rebuildStructuredRawDataFromDocuments(sourceDocuments).mergedForHpi
       : (merged ?? emptyStructuredRawPersisted().mergedForHpi);
+
+  const [hpiText, setHpiText] = useState<string | null>(null);
+  const [hpiLoading, setHpiLoading] = useState(false);
+  const [hpiError, setHpiError] = useState<string | null>(null);
+
+  const onGenerateHpi = useCallback(async () => {
+    if (!caseId?.trim()) return;
+    setHpiError(null);
+    setHpiLoading(true);
+    try {
+      const res = await fetch(`/api/cases/${caseId}/generate-hpi`, { method: "POST" });
+      const data = (await res.json().catch(() => ({}))) as { hpi?: string; error?: string };
+      if (!res.ok) {
+        setHpiError(data.error ?? `Generation failed (${res.status})`);
+        return;
+      }
+      if (typeof data.hpi === "string" && data.hpi.trim()) {
+        setHpiText(data.hpi);
+      } else {
+        setHpiError("Empty response");
+      }
+    } catch {
+      setHpiError("Request failed");
+    } finally {
+      setHpiLoading(false);
+    }
+  }, [caseId]);
+
   return (
     <div className="flex flex-col gap-6">
       <div>
@@ -69,6 +102,33 @@ export function MergedHpiSummary({
           Normalized merge across uploaded files for HPI generation. Each section lists all current
           sources ({sourceDocuments?.length ?? 0}).
         </p>
+        <div className="mt-3">
+          <button
+            type="button"
+            onClick={() => void onGenerateHpi()}
+            disabled={hpiLoading || !caseId?.trim()}
+            className="inline-flex h-9 items-center justify-center rounded-full border border-zinc-300 bg-white px-4 text-sm font-medium text-foreground transition-colors hover:bg-zinc-50 disabled:pointer-events-none disabled:opacity-50 dark:border-zinc-600 dark:bg-zinc-900 dark:hover:bg-zinc-800"
+          >
+            {hpiLoading ? "Generating…" : "Generate HPI"}
+          </button>
+        </div>
+        {hpiError ? (
+          <p className="mt-2 text-sm text-red-700 dark:text-red-300">{hpiError}</p>
+        ) : null}
+        {hpiText ? (
+          <div className="mt-4 flex flex-col gap-2">
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+              Generated HPI
+            </h3>
+            <div className="rounded-lg border border-zinc-200 bg-white px-3 py-3 text-sm leading-relaxed text-foreground dark:border-zinc-800 dark:bg-zinc-950/50">
+              {hpiText.split("\n\n").map((para, i) => (
+                <p key={i} className="mb-3 last:mb-0">
+                  {para}
+                </p>
+              ))}
+            </div>
+          </div>
+        ) : null}
       </div>
 
       <div className="grid gap-6 sm:grid-cols-1">

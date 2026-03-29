@@ -304,6 +304,7 @@ export default function CaseEditPage() {
         className="rounded-xl border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-950/30"
       >
         <MergedHpiSummary
+          caseId={id}
           merged={doc.structuredRawData?.mergedForHpi}
           sourceDocuments={doc.sourceDocuments}
         />
