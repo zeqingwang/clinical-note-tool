@@ -4,6 +4,9 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useState, useTransition } from "react";
 import type { CaseDetail, SourceDocument } from "@/types/case";
+import { RawJsonDetails, StructuredOutputView } from "./structured-output-view";
+
+const INGEST_EXPECT_MS = 60_000;
 
 export default function CaseEditPage() {
   const router = useRouter();
@@ -18,6 +21,7 @@ export default function CaseEditPage() {
   const [loading, setLoading] = useState(true);
   const [pending, startTransition] = useTransition();
   const [ingesting, setIngesting] = useState(false);
+  const [ingestProgress, setIngestProgress] = useState(0);
   const [ingestError, setIngestError] = useState<string | null>(null);
   const [deletingSourceIndex, setDeletingSourceIndex] = useState<number | null>(null);
   const [sourceDeleteError, setSourceDeleteError] = useState<string | null>(null);
@@ -95,6 +99,12 @@ export default function CaseEditPage() {
 
       setIngestError(null);
       setIngesting(true);
+      setIngestProgress(0);
+      const started = Date.now();
+      const progressTimer = window.setInterval(() => {
+        const elapsed = Date.now() - started;
+        setIngestProgress(Math.min(95, (elapsed / INGEST_EXPECT_MS) * 95));
+      }, 200);
       try {
         const fd = new FormData();
         fd.append("file", file);
@@ -110,8 +120,11 @@ export default function CaseEditPage() {
 
         if (!res.ok) {
           setIngestError(payload.error ?? `Upload failed (${res.status})`);
+          setIngestProgress(0);
           return;
         }
+
+        setIngestProgress(100);
 
         const refreshed = await fetch(`/api/cases/${id}`);
         if (refreshed.ok) {
@@ -122,8 +135,11 @@ export default function CaseEditPage() {
         }
 
         startTransition(() => router.refresh());
+        await new Promise((r) => setTimeout(r, 400));
       } finally {
+        window.clearInterval(progressTimer);
         setIngesting(false);
+        setIngestProgress(0);
       }
     },
     [id, router],
@@ -206,7 +222,8 @@ export default function CaseEditPage() {
           </h2>
           <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
             Choose a <strong>PDF</strong> or <strong>Word document (.docx)</strong>. Text is extracted,
-            then structured with the OpenAI API. Requires{" "}
+            then structured with the OpenAI API. Processing usually finishes within about one minute.
+            Requires{" "}
             <code className="rounded bg-zinc-200/90 px-1.5 py-0.5 text-xs dark:bg-zinc-800">
               OPENAI_API_KEY
             </code>{" "}
@@ -233,7 +250,28 @@ export default function CaseEditPage() {
           <span className="text-xs text-zinc-500 dark:text-zinc-400">.pdf or .docx only.</span>
         </div>
         {ingesting ? (
-          <p className="text-sm text-zinc-700 dark:text-zinc-300">Extracting text and structuring with GPT…</p>
+          <div className="flex flex-col gap-2" role="status" aria-live="polite">
+            <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-zinc-600 dark:text-zinc-400">
+              <span>Extracting text and structuring…</span>
+              <span className="tabular-nums">{Math.round(ingestProgress)}%</span>
+            </div>
+            <div
+              className="h-2.5 w-full overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800"
+              aria-valuenow={Math.round(ingestProgress)}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-label="Processing progress"
+              role="progressbar"
+            >
+              <div
+                className="h-full rounded-full bg-foreground transition-[width] duration-200 ease-out"
+                style={{ width: `${ingestProgress}%` }}
+              />
+            </div>
+            <p className="text-xs text-zinc-500 dark:text-zinc-500">
+              Most files finish well under 1 minute; large documents may take longer.
+            </p>
+          </div>
         ) : null}
         {ingestError ? (
           <p className="text-sm text-red-700 dark:text-red-300">{ingestError}</p>
@@ -244,7 +282,7 @@ export default function CaseEditPage() {
         <div className="flex flex-col gap-4">
           <h2 className="text-lg font-semibold tracking-tight">Structured output (by file)</h2>
           <p className="text-xs text-zinc-600 dark:text-zinc-400">
-            Raw uploads are not stored—only the parsed JSON below is saved on each case.
+            Raw uploads are not stored—only the structured fields below are saved on each case.
           </p>
           {sourceDeleteError ? (
             <p className="text-sm text-red-700 dark:text-red-300">{sourceDeleteError}</p>
@@ -276,9 +314,10 @@ export default function CaseEditPage() {
                   {deletingSourceIndex === index ? "…" : "Delete"}
                 </button>
               </summary>
-              <pre className="max-h-[28rem] overflow-auto border-t border-zinc-200 px-4 py-3 text-xs leading-relaxed dark:border-zinc-800">
-                {JSON.stringify(sd.structuredOutput, null, 2)}
-              </pre>
+              <div className="flex flex-col gap-3 border-t border-zinc-200 px-4 py-3 dark:border-zinc-800">
+                <StructuredOutputView docType={sd.type} data={sd.structuredOutput} />
+                <RawJsonDetails data={sd.structuredOutput} />
+              </div>
             </details>
           ))}
         </div>
