@@ -60,12 +60,20 @@ export default function CasesPage() {
             <strong>PDF</strong> or <strong>Word (.docx)</strong> note for AI structuring.
           </p>
         </div>
-        <Link
-          href="/cases/new"
-          className="inline-flex h-10 shrink-0 items-center justify-center rounded-full bg-foreground px-5 text-sm font-medium text-background transition-colors hover:opacity-90"
-        >
-          New case
-        </Link>
+        <div className="flex flex-wrap gap-2">
+          <Link
+            href="/mcg"
+            className="inline-flex h-10 shrink-0 items-center justify-center rounded-full border border-zinc-300 bg-white px-5 text-sm font-medium text-foreground transition-colors hover:bg-zinc-50 dark:border-zinc-600 dark:bg-zinc-900 dark:hover:bg-zinc-800"
+          >
+            MCG criteria
+          </Link>
+          <Link
+            href="/cases/new"
+            className="inline-flex h-10 shrink-0 items-center justify-center rounded-full bg-foreground px-5 text-sm font-medium text-background transition-colors hover:opacity-90"
+          >
+            New case
+          </Link>
+        </div>
       </header>
 
       {cases === null ? (

@@ -11,3 +11,4 @@ export type {
   SourceDocument,
   SourceDocumentType,
 } from "./case";
+export type { MCGCriteria, MCGDiseaseBlock, McgDiagnosisCriterionValue } from "./mcg";
