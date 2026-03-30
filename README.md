@@ -1,36 +1,104 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+## Clinical Note Tool (Next.js + MongoDB + GPT)
 
-## Getting Started
+This app ingests clinical documents, structures key clinical fields, generates an HPI narrative, and stores a versioned HPI history per case. It also supports importing MCG-style criteria documents (mapped by disease/pathway) separately from cases.
 
-First, run the development server:
+## Basic Functions (User Instructions)
+
+### Cases (clinical documents + HPI workflow)
+Open `/cases`.
+
+1. Create a new case: `/cases/new`.
+2. Upload clinical documents (PDF or DOCX) for the case.
+3. The system auto-classifies document type (ER_NOTE / HP_NOTE / OTHER), extracts text, and produces `structuredRawData`.
+4. In the case page, click `Generate HPI` to create an HPI and append it to the `generatedHPI` history.
+5. For each generated HPI entry:
+   - `Review` runs a payer/UM score + missing points + inconsistencies + improvements.
+   - `Regenerate review` regenerates a new HPI using the review output.
+   - `Edit` allows direct modification with a simple choice:
+     - `Update this HPI`: modifies the current entry, sets `type: human_revise`, and clears score/review fields.
+     - `Save as new HPI`: creates a new entry with `type: human_revise` and clears score/review fields for the new one.
+   - `Delete` removes the entry from history.
+6. `Auto generate loop` runs a hybrid loop (generate 2 candidates, review both, then refine up to 10 times with early stopping). It saves only the final best-scoring HPI once.
+
+### MCG criteria (separate from cases)
+Open `/mcg`.
+
+1. Upload an MCG guideline PDF or DOCX.
+2. The system extracts a structured JSON criteria map keyed by disease/pathway identifiers.
+3. View the extracted criteria in `/mcg/[id]`.
+
+## Setup
+
+### Prerequisites
+- Node.js (Node 20+ recommended)
+- MongoDB connection string
+- OpenAI API key
+
+### Environment variables
+Create `.env.local` with:
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+MONGODB_URI=your_mongodb_connection_string
+MONGODB_DB=your_optional_database_name
+OPENAI_API_KEY=your_openai_key
+OPENAI_MODEL=gpt-4o-mini
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### Local dev
+```bash
+npm install
+npm run dev
+```
+Then open `http://localhost:3000`.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Architecture Overview
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+### Frontend
+- Next.js App Router under `src/app/`
+- Case UI:
+  - `src/app/cases/[id]/page.tsx`: loads case detail and renders main sections
+  - `src/app/cases/[id]/merged-hpi-summary.tsx`: HPI generation/review/regenerate/edit UI
 
-## Learn More
+### Backend (API routes)
+- `src/app/api/cases/[id]/ingest/route.ts`: upload PDFs/DOCX and structure into `structuredRawData`
+- `src/app/api/cases/[id]/generate-hpi/route.ts`: generate HPI and append to `generatedHPI`
+- `src/app/api/cases/[id]/generated-hpi/route.ts`:
+  - `DELETE` deletes an HPI entry
+  - `PATCH` edits an HPI entry (update current or save new)
+- `src/app/api/cases/[id]/generated-hpi/review/route.ts`: payer/UM review stored as `score` + `improvement`
+- `src/app/api/cases/[id]/regenerate-hpi/route.ts`: regenerates using review instructions
+- `src/app/api/cases/[id]/auto-generate-hpi-loop/route.ts`: server-side loop; saves only the final HPI
 
-To learn more about Next.js, take a look at the following resources:
+### Core libraries
+- HPI generation: `src/lib/generate-hpi-from-summary-gpt.ts`
+- Review: `src/lib/generate-hpi-review-gpt.ts`
+- Regeneration: `src/lib/generate-hpi-regenerate-gpt.ts`
+- Auto-loop orchestration (in-memory): `src/lib/auto-hpi-loop.ts`
+- MongoDB persistence: `src/lib/cases-db.ts`
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+### MCG extraction
+- `src/lib/structure-mcg-gpt.ts` and `src/lib/mcg-db.ts`
+- UI: `src/app/mcg/page.tsx` and `src/app/mcg/[id]/page.tsx`
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Deploy to AWS Amplify
 
-## Deploy on Vercel
+### 1) Connect your repo
+1. AWS Amplify Console -> Create app
+2. Connect Git provider (GitHub, GitLab, etc.)
+3. Select branch (e.g. `main`)
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+### 2) Build settings (typical for Next.js)
+Set:
+- Build command: `npm run build`
+- Start command: `npm run start`
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Amplify usually detects Next.js automatically; if not, choose the Next.js framework preset.
+
+### 3) Configure environment variables in Amplify
+Add:
+- `MONGODB_URI`
+- `MONGODB_DB` (optional)
+- `OPENAI_API_KEY`
+- `OPENAI_MODEL` (optional, defaults to `gpt-4o-mini`)
+
+Then redeploy.
