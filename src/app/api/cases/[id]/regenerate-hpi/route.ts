@@ -40,6 +40,7 @@ export async function POST(request: Request, context: RouteCtx) {
       doc.structuredRawData.mergedForHpi,
       o.originalHpiText,
       o.improvementNotes,
+      doc.mcgEvaluation,
     );
     const generatedHPI = await appendGeneratedHpi(id, hpi);
     if (!generatedHPI) {

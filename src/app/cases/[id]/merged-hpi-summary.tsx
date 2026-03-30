@@ -10,7 +10,7 @@ import {
   regenInstructionToPrompt,
   type HpiRegenerateInstructionDraft,
 } from "@/lib/hpi-regenerate-instruction";
-import type { GeneratedHpiEntry, SourceDocument } from "@/types/case";
+import type { GeneratedHpiEntry, SourceDocument, McgEvaluation } from "@/types/case";
 
 type HpiRegenerateBucket = "missing" | "inconsistency" | "suggested";
 
@@ -64,6 +64,7 @@ export function MergedHpiSummary({
   merged,
   sourceDocuments,
   generatedHPI,
+  mcgEvaluation,
   onGeneratedHpiChange,
 }: {
   caseId?: string;
@@ -71,6 +72,7 @@ export function MergedHpiSummary({
   /** When set, summary is recomputed from every file’s structured output (matches server). */
   sourceDocuments?: SourceDocument[];
   generatedHPI: GeneratedHpiEntry[];
+  mcgEvaluation: McgEvaluation;
   onGeneratedHpiChange?: (entries: GeneratedHpiEntry[]) => void;
 }) {
   const m =
@@ -389,6 +391,77 @@ export function MergedHpiSummary({
         {autoLoopError ? (
           <p className="mt-2 text-sm text-red-700 dark:text-red-300">{autoLoopError}</p>
         ) : null}
+        <div className="mt-4 rounded-xl border border-violet-200 bg-violet-50/40 p-4 dark:border-violet-900/50 dark:bg-violet-950/20">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-violet-900 dark:text-violet-200">
+            MCG evaluation (payer / medical necessity)
+          </h3>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            <div>
+              <p className="text-xs font-medium text-violet-900/90 dark:text-violet-200/90">
+                Meets DKA criteria
+              </p>
+              <p
+                className={`mt-1 text-sm font-semibold ${
+                  mcgEvaluation.meetsDKACriteria
+                    ? "text-emerald-700 dark:text-emerald-300"
+                    : "text-rose-700 dark:text-rose-300"
+                }`}
+              >
+                {mcgEvaluation.meetsDKACriteria ? "Yes" : "No"}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs font-medium text-violet-900/90 dark:text-violet-200/90">
+                Severity level
+              </p>
+              <p className="mt-1 text-sm font-semibold text-foreground">
+                {mcgEvaluation.severityLevel}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs font-medium text-violet-900/90 dark:text-violet-200/90">
+                Inpatient justified
+              </p>
+              <p
+                className={`mt-1 text-sm font-semibold ${
+                  mcgEvaluation.inpatientJustified
+                    ? "text-emerald-700 dark:text-emerald-300"
+                    : "text-rose-700 dark:text-rose-300"
+                }`}
+              >
+                {mcgEvaluation.inpatientJustified ? "Yes" : "No"}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs font-medium text-violet-900/90 dark:text-violet-200/90">
+                ICU suggested
+              </p>
+              <p
+                className={`mt-1 text-sm font-semibold ${
+                  mcgEvaluation.icuSuggested
+                    ? "text-emerald-700 dark:text-emerald-300"
+                    : "text-rose-700 dark:text-rose-300"
+                }`}
+              >
+                {mcgEvaluation.icuSuggested ? "Yes" : "No"}
+              </p>
+            </div>
+          </div>
+          <div className="mt-4">
+            <p className="text-xs font-medium text-violet-900/90 dark:text-violet-200/90">
+              Matched criteria
+            </p>
+            {mcgEvaluation.matchedCriteria.length > 0 ? (
+              <ul className="mt-2 list-inside list-disc space-y-1 text-sm text-foreground">
+                {mcgEvaluation.matchedCriteria.map((c) => (
+                  <li key={c}>{c}</li>
+                ))}
+              </ul>
+            ) : (
+              <p className="mt-2 text-sm italic text-zinc-500 dark:text-zinc-400">None detected.</p>
+            )}
+          </div>
+        </div>
         {generatedHPI.length > 0 ? (
           <div className="mt-4 flex flex-col gap-2">
             <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">

@@ -95,6 +95,26 @@ export const mergedForHpiSchema = z.object({
 });
 export type MergedForHpi = z.infer<typeof mergedForHpiSchema>;
 
+export const mcgEvaluationSchema = z.object({
+  /** Example mapping for DKA admission; computed from the structured HPI summary. */
+  meetsDKACriteria: z.boolean(),
+  severityLevel: z.enum(["mild", "moderate", "severe"]),
+  inpatientJustified: z.boolean(),
+  icuSuggested: z.boolean(),
+  matchedCriteria: z.array(z.string()),
+});
+export type McgEvaluation = z.infer<typeof mcgEvaluationSchema>;
+
+export function defaultMcgEvaluation(): McgEvaluation {
+  return mcgEvaluationSchema.parse({
+    meetsDKACriteria: false,
+    severityLevel: "mild",
+    inpatientJustified: false,
+    icuSuggested: false,
+    matchedCriteria: [],
+  });
+}
+
 /** Payer-oriented quality score for a generated HPI (insurance / UM review). */
 export const generatedHpiScoreSchema = z.object({
   /** 0–100 overall documentation strength for medical necessity / denial risk */
@@ -172,6 +192,7 @@ export const caseStoredFieldsSchema: z.ZodType<CaseStoredFields> = z.object({
   sourceDocuments: z.array(sourceDocumentSchema),
   structuredRawData: caseStructuredRawDataPersistedSchema.optional(),
   generatedHPI: z.array(generatedHpiEntrySchema).optional(),
+  mcgEvaluation: mcgEvaluationSchema.optional(),
 });
 
 /** User-editable fields (form / API body) */
@@ -189,6 +210,7 @@ export function createDraftCaseRecord(now: Date = new Date()): CaseStoredFields 
     sourceDocuments: [],
     structuredRawData: emptyStructuredRawPersisted(now),
     generatedHPI: [],
+    mcgEvaluation: defaultMcgEvaluation(),
   });
 }
 

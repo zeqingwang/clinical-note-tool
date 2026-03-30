@@ -1,5 +1,5 @@
 import OpenAI from "openai";
-import type { MergedForHpi } from "@/models/case";
+import type { McgEvaluation, MergedForHpi } from "@/models/case";
 import {
   buildHpiStructuredInputFromMerged,
   mergedForHpiToSummaryMarkdown,
@@ -13,9 +13,11 @@ You receive four blocks:
 
 2) clinicalSummaryMarkdown: merged clinical summary from source documents. This is the primary source of truth.
 
-3) originalHpi: the current HPI narrative to improve.
+3) mcgEvaluation: payer / MCG readiness evaluation computed from the structured clinical layer.
 
-4) userRegenerationNotes: author instructions as markdown with optional sections: "Missing or thin points to address", "Inconsistencies to resolve", "Suggested improvements (from review)", and "Custom instructions from author". Honor each section when rewriting.
+4) originalHpi: the current HPI narrative to improve.
+
+5) userRegenerationNotes: author instructions as markdown with optional sections: "Missing or thin points to address", "Inconsistencies to resolve", "Suggested improvements (from review)", and "Custom instructions from author". Honor each section when rewriting.
 
 Task:
 Rewrite the HPI as ONE cohesive narrative that addresses userRegenerationNotes while staying faithful to clinicalSummaryMarkdown and structuredInput.
@@ -57,6 +59,7 @@ export async function regenerateHpiWithUserNotes(
   merged: MergedForHpi,
   originalHpiText: string,
   improvementNotes: string,
+  mcgEvaluation: McgEvaluation,
 ): Promise<string> {
   const key = process.env.OPENAI_API_KEY?.trim();
   if (!key) {
@@ -65,7 +68,7 @@ export async function regenerateHpiWithUserNotes(
 
   const structuredInput = buildHpiStructuredInputFromMerged(merged);
   const clinicalSummaryMarkdown = mergedForHpiToSummaryMarkdown(merged);
-  const user = `structuredInput:\n${JSON.stringify(structuredInput, null, 2)}\n\n---\n\nclinicalSummaryMarkdown:\n${clinicalSummaryMarkdown}\n\n---\n\noriginalHpi:\n${originalHpiText.trim()}\n\n---\n\nuserRegenerationNotes:\n${improvementNotes.trim()}`;
+  const user = `structuredInput:\n${JSON.stringify(structuredInput, null, 2)}\n\n---\n\nclinicalSummaryMarkdown:\n${clinicalSummaryMarkdown}\n\n---\n\nmcgEvaluation (payer / MCG readiness):\n${JSON.stringify(mcgEvaluation, null, 2)}\n\n---\n\noriginalHpi:\n${originalHpiText.trim()}\n\n---\n\nuserRegenerationNotes:\n${improvementNotes.trim()}`;
 
   const openai = new OpenAI({ apiKey: key });
   const completion = await openai.chat.completions.create({

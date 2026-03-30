@@ -36,7 +36,11 @@ export async function POST(request: Request, context: RouteCtx) {
   }
 
   try {
-    const result = await generateHpiInsuranceReview(doc.structuredRawData.mergedForHpi, o.text);
+    const result = await generateHpiInsuranceReview(
+      doc.structuredRawData.mergedForHpi,
+      o.text,
+      doc.mcgEvaluation,
+    );
     const reviewGeneratedAt = new Date().toISOString();
     const generatedHPI = await setGeneratedHpiReview(
       id,

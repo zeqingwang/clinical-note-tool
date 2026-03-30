@@ -10,8 +10,10 @@ import {
   createDraftCaseRecord,
   emptyStructuredRawPersisted,
   generatedHpiScoreSchema,
+  mcgEvaluationSchema,
 } from "@/models/case";
 import type { StructuredOutput } from "@/models/case";
+import { evaluateMcgDkaFromMerged } from "@/lib/evaluate-mcg-dka";
 import type {
   CaseDetail,
   CaseEditableFields,
@@ -208,6 +210,14 @@ export async function getCaseById(id: string): Promise<CaseDetail | null> {
         : emptyStructuredRawPersisted(updatedAt);
   }
 
+  const computedMcgEvaluation = evaluateMcgDkaFromMerged(structuredRawData.mergedForHpi);
+  const normalizedMcgEvaluation = doc.mcgEvaluation
+    ? (() => {
+        const p = mcgEvaluationSchema.safeParse(doc.mcgEvaluation);
+        return p.success ? p.data : computedMcgEvaluation;
+      })()
+    : computedMcgEvaluation;
+
   return {
     id: (doc._id as ObjectId).toHexString(),
     title: typeof doc.title === "string" ? doc.title : "",
@@ -216,6 +226,7 @@ export async function getCaseById(id: string): Promise<CaseDetail | null> {
     sourceDocuments,
     structuredRawData,
     generatedHPI: normalizeGeneratedHpi(doc.generatedHPI),
+    mcgEvaluation: normalizedMcgEvaluation,
   };
 }
 
@@ -263,10 +274,8 @@ export async function ingestCaseFile(
     normalizeSourceDocuments(after),
     after.updatedAt instanceof Date ? after.updatedAt : new Date(),
   );
-  await db.collection(CASE_COLLECTION).updateOne(
-    { _id: new ObjectId(id) },
-    { $set: { structuredRawData } },
-  );
+  const mcgEvaluation = evaluateMcgDkaFromMerged(structuredRawData.mergedForHpi);
+  await db.collection(CASE_COLLECTION).updateOne({ _id: new ObjectId(id) }, { $set: { structuredRawData, mcgEvaluation } });
   return true;
 }
 
@@ -313,12 +322,14 @@ export async function removeSourceDocumentAtIndex(caseId: string, index: number)
 
   const updatedAt = new Date();
   const structuredRawData = persistStructuredRawFromDocuments(normalized, updatedAt);
+  const mcgEvaluation = evaluateMcgDkaFromMerged(structuredRawData.mergedForHpi);
 
   const update: UpdateFilter<Document> = {
     $set: {
       sourceDocuments: normalized,
       updatedAt,
       structuredRawData,
+      mcgEvaluation,
     },
   };
   if (normalized.length === 0) {

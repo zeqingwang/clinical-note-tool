@@ -10,5 +10,6 @@ export type {
   GeneratedHpiScore,
   SourceDocument,
   SourceDocumentType,
+  McgEvaluation,
 } from "./case";
 export type { MCGCriteria, MCGDiseaseBlock, McgDiagnosisCriterionValue } from "./mcg";

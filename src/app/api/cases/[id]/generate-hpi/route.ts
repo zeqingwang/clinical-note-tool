@@ -39,6 +39,7 @@ export async function POST(request: Request, context: RouteCtx) {
   try {
     const hpi = await generateHpiNaturalLanguageFromMerged(doc.structuredRawData.mergedForHpi, {
       candidateVariant,
+      mcgEvaluation: doc.mcgEvaluation,
     });
     const generatedHPI = await appendGeneratedHpi(id, hpi);
     if (!generatedHPI) {

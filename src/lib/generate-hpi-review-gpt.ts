@@ -1,6 +1,11 @@
 import OpenAI from "openai";
 import { mergedForHpiToSummaryMarkdown } from "@/lib/generate-hpi-from-summary-gpt";
-import { generatedHpiScoreSchema, type GeneratedHpiScore, type MergedForHpi } from "@/models/case";
+import {
+  generatedHpiScoreSchema,
+  type GeneratedHpiScore,
+  type McgEvaluation,
+  type MergedForHpi,
+} from "@/models/case";
 
 const REVIEW_SYSTEM = `You are a clinical documentation and utilization management (UM) advisor helping ensure a History of Present Illness (HPI) will stand up to payer / insurance medical necessity review and is less likely to be denied for insufficient documentation.
 
@@ -55,6 +60,7 @@ export type HpiInsuranceReviewResult = {
 export async function generateHpiInsuranceReview(
   merged: MergedForHpi,
   hpiText: string,
+  mcgEvaluation: McgEvaluation,
 ): Promise<HpiInsuranceReviewResult> {
   const key = process.env.OPENAI_API_KEY?.trim();
   if (!key) {
@@ -62,7 +68,7 @@ export async function generateHpiInsuranceReview(
   }
 
   const clinicalSummaryMarkdown = mergedForHpiToSummaryMarkdown(merged);
-  const user = `clinicalSummaryMarkdown:\n${clinicalSummaryMarkdown}\n\n---\n\nhpiText:\n${hpiText.trim()}`;
+  const user = `clinicalSummaryMarkdown:\n${clinicalSummaryMarkdown}\n\n---\nmcgEvaluation (payer / MCG readiness):\n${JSON.stringify(mcgEvaluation, null, 2)}\n\n---\nhpiText:\n${hpiText.trim()}\n\n---\nTask: score the hpiText for medical necessity documentation aligned with clinicalSummaryMarkdown and the provided mcgEvaluation.`;
 
   const openai = new OpenAI({ apiKey: key });
   const completion = await openai.chat.completions.create({

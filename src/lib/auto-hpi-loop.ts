@@ -1,5 +1,6 @@
 import type { MergedForHpi } from "@/models/case";
 import type { GeneratedHpiEntry } from "@/types/case";
+import { evaluateMcgDkaFromMerged } from "@/lib/evaluate-mcg-dka";
 import { generateHpiNaturalLanguageFromMerged } from "@/lib/generate-hpi-from-summary-gpt";
 import { generateHpiInsuranceReview } from "@/lib/generate-hpi-review-gpt";
 import { regenerateHpiWithUserNotes } from "@/lib/generate-hpi-regenerate-gpt";
@@ -13,8 +14,12 @@ function reviewOverallScore(e: GeneratedHpiEntry): number {
   return typeof o === "number" && !Number.isNaN(o) ? o : -1;
 }
 
-async function reviewToEntry(text: string, merged: MergedForHpi): Promise<GeneratedHpiEntry> {
-  const r = await generateHpiInsuranceReview(merged, text);
+async function reviewToEntry(
+  text: string,
+  merged: MergedForHpi,
+  mcgEvaluation = evaluateMcgDkaFromMerged(merged),
+): Promise<GeneratedHpiEntry> {
+  const r = await generateHpiInsuranceReview(merged, text, mcgEvaluation);
   const now = new Date().toISOString();
   return {
     text,
@@ -30,11 +35,18 @@ async function reviewToEntry(text: string, merged: MergedForHpi): Promise<Genera
  * @returns The best HPI text observed (by review overall score) along the run.
  */
 export async function runAutoHpiLoopInMemory(merged: MergedForHpi): Promise<string> {
-  const textA = await generateHpiNaturalLanguageFromMerged(merged, { candidateVariant: 1 });
-  const textB = await generateHpiNaturalLanguageFromMerged(merged, { candidateVariant: 2 });
+  const mcgEvaluation = evaluateMcgDkaFromMerged(merged);
+  const textA = await generateHpiNaturalLanguageFromMerged(merged, {
+    candidateVariant: 1,
+    mcgEvaluation,
+  });
+  const textB = await generateHpiNaturalLanguageFromMerged(merged, {
+    candidateVariant: 2,
+    mcgEvaluation,
+  });
 
-  const reviewedA = await reviewToEntry(textA, merged);
-  const reviewedB = await reviewToEntry(textB, merged);
+  const reviewedA = await reviewToEntry(textA, merged, mcgEvaluation);
+  const reviewedB = await reviewToEntry(textB, merged, mcgEvaluation);
 
   const scoreA = reviewOverallScore(reviewedA);
   const scoreB = reviewOverallScore(reviewedB);
@@ -47,8 +59,8 @@ export async function runAutoHpiLoopInMemory(merged: MergedForHpi): Promise<stri
 
   for (let i = 0; i < AUTO_REFINE_MAX; i++) {
     const prompt = buildFullReviewRegeneratePrompt(working);
-    const newText = await regenerateHpiWithUserNotes(merged, working.text, prompt);
-    const reviewed = await reviewToEntry(newText, merged);
+    const newText = await regenerateHpiWithUserNotes(merged, working.text, prompt, mcgEvaluation);
+    const reviewed = await reviewToEntry(newText, merged, mcgEvaluation);
     const newScore = reviewOverallScore(reviewed);
 
     if (newScore > bestScore) {

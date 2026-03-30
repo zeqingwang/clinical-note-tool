@@ -308,6 +308,7 @@ export default function CaseEditPage() {
           merged={doc.structuredRawData?.mergedForHpi}
           sourceDocuments={doc.sourceDocuments}
           generatedHPI={doc.generatedHPI}
+          mcgEvaluation={doc.mcgEvaluation}
           onGeneratedHpiChange={(entries) =>
             setDoc((prev) => (prev ? { ...prev, generatedHPI: entries } : null))
           }

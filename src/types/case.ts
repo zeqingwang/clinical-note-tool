@@ -4,6 +4,7 @@ import type {
   CaseStructuredRawDataPersisted,
   GeneratedHpiEntry,
   GeneratedHpiScore,
+  McgEvaluation,
 } from "@/models/case";
 
 export type {
@@ -11,6 +12,7 @@ export type {
   CaseStructuredRawDataPersisted,
   GeneratedHpiEntry,
   GeneratedHpiScore,
+  McgEvaluation,
 };
 
 export type SourceDocumentType = "ER_NOTE" | "HP_NOTE" | "OTHER";
@@ -38,6 +40,8 @@ export type CaseStoredFields = CaseEditableFields & {
   structuredRawData?: CaseStructuredRawDataPersisted;
   /** Each successful “Generate HPI” appends `{ text, createdAt }` */
   generatedHPI?: GeneratedHpiEntry[];
+  /** Computed from the merged structured HPI summary (MCG / payer readiness). */
+  mcgEvaluation?: McgEvaluation;
 };
 
 /** Document as returned from MongoDB */
@@ -52,6 +56,7 @@ export type CaseDetail = CaseEditableFields & {
   sourceDocuments: SourceDocument[];
   structuredRawData: CaseStructuredRawDataPersisted;
   generatedHPI: GeneratedHpiEntry[];
+  mcgEvaluation: McgEvaluation;
 };
 
 /** Row in the cases list */

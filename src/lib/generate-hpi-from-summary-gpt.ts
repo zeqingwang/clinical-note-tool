@@ -1,5 +1,5 @@
 import OpenAI from "openai";
-import type { MergedForHpi } from "@/models/case";
+import type { McgEvaluation, MergedForHpi } from "@/models/case";
 import type { HpiStructuredInput } from "@/types/hpi-structured-input";
 
 function chunkLines(text: string, maxChunks = 40): string[] {
@@ -148,7 +148,7 @@ export type GenerateHpiCandidateVariant = 1 | 2;
 
 export async function generateHpiNaturalLanguageFromMerged(
   merged: MergedForHpi,
-  options?: { candidateVariant?: GenerateHpiCandidateVariant },
+  options?: { candidateVariant?: GenerateHpiCandidateVariant; mcgEvaluation?: McgEvaluation },
 ): Promise<string> {
   const key = process.env.OPENAI_API_KEY?.trim();
   if (!key) {
@@ -156,16 +156,21 @@ export async function generateHpiNaturalLanguageFromMerged(
   }
 
   const variant = options?.candidateVariant ?? 1;
+  const mcgEvaluation = options?.mcgEvaluation;
 
   const structuredInput = buildHpiStructuredInputFromMerged(merged);
   const clinicalSummaryMarkdown = mergedForHpiToSummaryMarkdown(merged);
 
-  let user = `structuredInput:\n${JSON.stringify(structuredInput, null, 2)}\n\n---\n\nclinicalSummaryMarkdown:\n${clinicalSummaryMarkdown}`;
+  let user = `structuredInput:\n${JSON.stringify(structuredInput, null, 2)}\n\n---\n\nclinicalSummaryMarkdown:\n${clinicalSummaryMarkdown}\n\n---\n\nmcgEvaluation (payer / MCG readiness):\n${JSON.stringify(
+    mcgEvaluation ?? null,
+    null,
+    2,
+  )}`;
 
   let temperature = 0.35;
   if (variant === 2) {
     temperature = 0.48;
-    user += `\n\n---\n\nCandidate variant B (style direction only; same facts as variant A): give slightly stronger emphasis to chronological sequence; tie labs and exam findings to the working diagnosis using cautious phrasing ("consistent with" / "suggestive of"); describe ED treatments already administered in past tense; and make medical necessity for inpatient care (vs observation or discharge) especially explicit. Do not add information that is absent from structuredInput or clinicalSummaryMarkdown.`;
+    user += `\n\n---\n\nCandidate variant B (style direction only; same facts as variant A): give slightly stronger emphasis to chronological sequence; tie labs and exam findings to the working diagnosis using cautious phrasing ("consistent with" / "suggestive of"); describe ED treatments already administered in past tense; and make medical necessity for inpatient care (vs observation or discharge) especially explicit. Do not add information that is absent from structuredInput, clinicalSummaryMarkdown, or mcgEvaluation.`;
   }
 
   const openai = new OpenAI({ apiKey: key });
