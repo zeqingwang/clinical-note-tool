@@ -3,67 +3,16 @@
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { rebuildStructuredRawDataFromDocuments } from "@/lib/structured-raw-data";
 import { emptyStructuredRawPersisted, type MergedForHpi } from "@/models/case";
+import {
+  appendUniqueItem,
+  emptyRegenInstruction,
+  isRegenInstructionEmpty,
+  regenInstructionToPrompt,
+  type HpiRegenerateInstructionDraft,
+} from "@/lib/hpi-regenerate-instruction";
 import type { GeneratedHpiEntry, SourceDocument } from "@/types/case";
 
 type HpiRegenerateBucket = "missing" | "inconsistency" | "suggested";
-
-type HpiRegenerateInstructionDraft = {
-  missingPoints: string[];
-  inconsistencies: string[];
-  suggestedImprovements: string[];
-  /** Freeform author notes (not from + clicks). */
-  custom: string;
-};
-
-function emptyRegenInstruction(): HpiRegenerateInstructionDraft {
-  return {
-    missingPoints: [],
-    inconsistencies: [],
-    suggestedImprovements: [],
-    custom: "",
-  };
-}
-
-function appendUniqueItem(list: string[], item: string): string[] {
-  const t = item.trim();
-  if (!t) return list;
-  if (list.some((x) => x === t)) return list;
-  return [...list, t];
-}
-
-function regenInstructionToPrompt(d: HpiRegenerateInstructionDraft): string {
-  const parts: string[] = [];
-  if (d.missingPoints.length > 0) {
-    parts.push(
-      "## Missing or thin points to address\n" + d.missingPoints.map((x) => `- ${x}`).join("\n"),
-    );
-  }
-  if (d.inconsistencies.length > 0) {
-    parts.push(
-      "## Inconsistencies to resolve\n" + d.inconsistencies.map((x) => `- ${x}`).join("\n"),
-    );
-  }
-  if (d.suggestedImprovements.length > 0) {
-    parts.push(
-      "## Suggested improvements (from review)\n" +
-        d.suggestedImprovements.map((x) => `- ${x.replace(/\r?\n/g, " ").trim()}`).join("\n"),
-    );
-  }
-  const custom = d.custom.trim();
-  if (custom.length > 0) {
-    parts.push("## Custom instructions from author\n" + custom);
-  }
-  return parts.join("\n\n");
-}
-
-function isRegenInstructionEmpty(d: HpiRegenerateInstructionDraft): boolean {
-  return (
-    d.missingPoints.length === 0 &&
-    d.inconsistencies.length === 0 &&
-    d.suggestedImprovements.length === 0 &&
-    d.custom.trim() === ""
-  );
-}
 
 const PRIMARY_FIELDS: { key: keyof MergedForHpi; label: string }[] = [
   { key: "timeline", label: "Timeline" },
@@ -140,6 +89,9 @@ export function MergedHpiSummary({
   >({});
   const [regeneratingKey, setRegeneratingKey] = useState<string | null>(null);
   const [regenerateError, setRegenerateError] = useState<string | null>(null);
+  const [autoLoopRunning, setAutoLoopRunning] = useState(false);
+  const [autoLoopStatus, setAutoLoopStatus] = useState<string | null>(null);
+  const [autoLoopError, setAutoLoopError] = useState<string | null>(null);
 
   const entryKey = useCallback((e: GeneratedHpiEntry) => `${e.createdAt}\n${e.text}`, []);
 
@@ -347,6 +299,49 @@ export function MergedHpiSummary({
     }
   }, [caseId, onGeneratedHpiChange]);
 
+  const onAutoGenerateLoop = useCallback(async () => {
+    if (!caseId?.trim()) return;
+    setAutoLoopError(null);
+    setAutoLoopStatus(
+      "Running auto loop in memory (candidates, reviews, refines). Only the final HPI will be saved…",
+    );
+    setAutoLoopRunning(true);
+    try {
+      const res = await fetch(`/api/cases/${caseId.trim()}/auto-generate-hpi-loop`, {
+        method: "POST",
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        hpi?: string;
+        generatedHPI?: GeneratedHpiEntry[];
+        error?: string;
+      };
+      if (!res.ok) {
+        setAutoLoopError(data.error ?? `Auto loop failed (${res.status})`);
+        setAutoLoopStatus(null);
+        return;
+      }
+      if (typeof data.hpi === "string" && data.hpi.trim() && Array.isArray(data.generatedHPI)) {
+        onGeneratedHpiChange?.(data.generatedHPI);
+        setAutoLoopStatus("Done. The best-scoring HPI from the run was appended to history once.");
+      } else {
+        setAutoLoopError("Invalid response");
+        setAutoLoopStatus(null);
+      }
+    } catch {
+      setAutoLoopError("Auto loop request failed");
+      setAutoLoopStatus(null);
+    } finally {
+      setAutoLoopRunning(false);
+    }
+  }, [caseId, onGeneratedHpiChange]);
+
+  const busy =
+    hpiLoading ||
+    autoLoopRunning ||
+    regeneratingKey !== null ||
+    reviewingKey !== null ||
+    deletingKey !== null;
+
   return (
     <div className="flex flex-col gap-6">
       <div>
@@ -357,16 +352,28 @@ export function MergedHpiSummary({
           Normalized merge across uploaded files for HPI generation. Each section lists all current
           sources ({sourceDocuments?.length ?? 0}).
         </p>
-        <div className="mt-3">
+        <div className="mt-3 flex flex-wrap items-center gap-2">
           <button
             type="button"
             onClick={() => void onGenerateHpi()}
-            disabled={hpiLoading || !caseId?.trim() || regeneratingKey !== null}
+            disabled={busy || !caseId?.trim()}
             className="inline-flex h-9 items-center justify-center rounded-full border border-zinc-300 bg-white px-4 text-sm font-medium text-foreground transition-colors hover:bg-zinc-50 disabled:pointer-events-none disabled:opacity-50 dark:border-zinc-600 dark:bg-zinc-900 dark:hover:bg-zinc-800"
           >
             {hpiLoading ? "Generating…" : "Generate HPI"}
           </button>
+          <button
+            type="button"
+            onClick={() => void onAutoGenerateLoop()}
+            disabled={busy || !caseId?.trim()}
+            title="Runs the full hybrid loop on the server without saving intermediates. Only the final best-scoring HPI is appended once. Refines use the complete review (score, summary, lists, full improvement text)."
+            className="inline-flex h-9 items-center justify-center rounded-full border border-violet-300 bg-violet-50 px-4 text-sm font-medium text-violet-950 transition-colors hover:bg-violet-100 disabled:pointer-events-none disabled:opacity-50 dark:border-violet-700 dark:bg-violet-950/60 dark:text-violet-100 dark:hover:bg-violet-900/80"
+          >
+            {autoLoopRunning ? "Auto loop running…" : "Auto generate loop"}
+          </button>
         </div>
+        {autoLoopStatus ? (
+          <p className="mt-2 text-xs text-violet-800 dark:text-violet-200/90">{autoLoopStatus}</p>
+        ) : null}
         {hpiError ? (
           <p className="mt-2 text-sm text-red-700 dark:text-red-300">{hpiError}</p>
         ) : null}
@@ -378,6 +385,9 @@ export function MergedHpiSummary({
         ) : null}
         {regenerateError ? (
           <p className="mt-2 text-sm text-red-700 dark:text-red-300">{regenerateError}</p>
+        ) : null}
+        {autoLoopError ? (
+          <p className="mt-2 text-sm text-red-700 dark:text-red-300">{autoLoopError}</p>
         ) : null}
         {generatedHPI.length > 0 ? (
           <div className="mt-4 flex flex-col gap-2">
@@ -426,9 +436,7 @@ export function MergedHpiSummary({
                           e.stopPropagation();
                           void onReviewHpiEntry(entry);
                         }}
-                        disabled={
-                          reviewingKey !== null || deletingKey !== null || regeneratingKey !== null
-                        }
+                        disabled={busy}
                         className="rounded-lg border border-zinc-300 bg-white px-2.5 py-1 text-xs font-medium text-foreground transition-colors hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-600 dark:bg-zinc-900 dark:hover:bg-zinc-800"
                       >
                         {reviewingKey === k
@@ -444,9 +452,7 @@ export function MergedHpiSummary({
                           e.stopPropagation();
                           void onDeleteHpiEntry(entry);
                         }}
-                        disabled={
-                          deletingKey !== null || reviewingKey !== null || regeneratingKey !== null
-                        }
+                        disabled={busy}
                         className="rounded-lg border border-red-200 bg-white px-2.5 py-1 text-xs font-medium text-red-700 transition-colors hover:bg-red-50 disabled:opacity-50 dark:border-red-900 dark:bg-zinc-950 dark:text-red-300 dark:hover:bg-red-950/40"
                       >
                         {deletingKey === k ? "…" : "Delete"}
@@ -691,11 +697,9 @@ export function MergedHpiSummary({
                                     onClick={() => void onRegenerateFromNotes(entry, prompt)}
                                     disabled={
                                       !caseId?.trim() ||
+                                      busy ||
                                       isRegenInstructionEmpty(draft) ||
-                                      !prompt.trim() ||
-                                      regeneratingKey !== null ||
-                                      reviewingKey !== null ||
-                                      deletingKey !== null
+                                      !prompt.trim()
                                     }
                                     className="inline-flex h-9 items-center justify-center rounded-full border border-zinc-300 bg-white px-4 text-sm font-medium text-foreground transition-colors hover:bg-zinc-50 disabled:pointer-events-none disabled:opacity-50 dark:border-zinc-600 dark:bg-zinc-900 dark:hover:bg-zinc-800"
                                   >

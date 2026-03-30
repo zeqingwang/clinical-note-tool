@@ -144,16 +144,29 @@ Output:
 Write only the HPI narrative body. Do not include explanations or metadata.`;
 
 
-export async function generateHpiNaturalLanguageFromMerged(merged: MergedForHpi): Promise<string> {
+export type GenerateHpiCandidateVariant = 1 | 2;
+
+export async function generateHpiNaturalLanguageFromMerged(
+  merged: MergedForHpi,
+  options?: { candidateVariant?: GenerateHpiCandidateVariant },
+): Promise<string> {
   const key = process.env.OPENAI_API_KEY?.trim();
   if (!key) {
     throw new Error("OPENAI_API_KEY is not set");
   }
 
+  const variant = options?.candidateVariant ?? 1;
+
   const structuredInput = buildHpiStructuredInputFromMerged(merged);
   const clinicalSummaryMarkdown = mergedForHpiToSummaryMarkdown(merged);
 
-  const user = `structuredInput:\n${JSON.stringify(structuredInput, null, 2)}\n\n---\n\nclinicalSummaryMarkdown:\n${clinicalSummaryMarkdown}`;
+  let user = `structuredInput:\n${JSON.stringify(structuredInput, null, 2)}\n\n---\n\nclinicalSummaryMarkdown:\n${clinicalSummaryMarkdown}`;
+
+  let temperature = 0.35;
+  if (variant === 2) {
+    temperature = 0.48;
+    user += `\n\n---\n\nCandidate variant B (style direction only; same facts as variant A): give slightly stronger emphasis to chronological sequence; tie labs and exam findings to the working diagnosis using cautious phrasing ("consistent with" / "suggestive of"); describe ED treatments already administered in past tense; and make medical necessity for inpatient care (vs observation or discharge) especially explicit. Do not add information that is absent from structuredInput or clinicalSummaryMarkdown.`;
+  }
 
   const openai = new OpenAI({ apiKey: key });
   const completion = await openai.chat.completions.create({
@@ -162,7 +175,7 @@ export async function generateHpiNaturalLanguageFromMerged(merged: MergedForHpi)
       { role: "system", content: HPI_SYSTEM },
       { role: "user", content: user },
     ],
-    temperature: 0.35,
+    temperature,
     max_completion_tokens: 4096,
   });
 
