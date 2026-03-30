@@ -22,6 +22,7 @@ async function reviewToEntry(
   const r = await generateHpiInsuranceReview(merged, text, mcgEvaluation);
   const now = new Date().toISOString();
   return {
+    type: "generated",
     text,
     createdAt: now,
     score: r.score,

@@ -1,7 +1,7 @@
 import { revalidatePath } from "next/cache";
 import { NextResponse } from "next/server";
 import { ObjectId } from "mongodb";
-import { appendGeneratedHpi, getCaseById } from "@/lib/cases-db";
+import { appendGeneratedHpiWithType, getCaseById } from "@/lib/cases-db";
 import { regenerateHpiWithUserNotes } from "@/lib/generate-hpi-regenerate-gpt";
 
 type RouteCtx = { params: Promise<{ id: string }> };
@@ -42,7 +42,7 @@ export async function POST(request: Request, context: RouteCtx) {
       o.improvementNotes,
       doc.mcgEvaluation,
     );
-    const generatedHPI = await appendGeneratedHpi(id, hpi);
+    const generatedHPI = await appendGeneratedHpiWithType(id, hpi, "regenerated");
     if (!generatedHPI) {
       return NextResponse.json({ error: "Could not save regenerated HPI" }, { status: 500 });
     }

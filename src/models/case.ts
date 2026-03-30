@@ -126,7 +126,11 @@ export const generatedHpiScoreSchema = z.object({
 });
 export type GeneratedHpiScore = z.infer<typeof generatedHpiScoreSchema>;
 
+export const generatedHpiTypeSchema = z.enum(["generated", "regenerated", "human_revise"]);
+export type GeneratedHpiType = z.infer<typeof generatedHpiTypeSchema>;
+
 export const generatedHpiEntrySchema = z.object({
+  type: generatedHpiTypeSchema,
   text: z.string(),
   /** ISO timestamp when this HPI was generated */
   createdAt: z.string(),

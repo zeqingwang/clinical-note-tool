@@ -10,9 +10,15 @@ import {
   regenInstructionToPrompt,
   type HpiRegenerateInstructionDraft,
 } from "@/lib/hpi-regenerate-instruction";
-import type { GeneratedHpiEntry, SourceDocument, McgEvaluation } from "@/types/case";
+import type { GeneratedHpiEntry, GeneratedHpiType, SourceDocument, McgEvaluation } from "@/types/case";
 
 type HpiRegenerateBucket = "missing" | "inconsistency" | "suggested";
+
+function hpiTypeLabel(t: GeneratedHpiType): string {
+  if (t === "regenerated") return "Regenerated";
+  if (t === "human_revise") return "Human revise";
+  return "Generated";
+}
 
 const PRIMARY_FIELDS: { key: keyof MergedForHpi; label: string }[] = [
   { key: "timeline", label: "Timeline" },
@@ -94,6 +100,11 @@ export function MergedHpiSummary({
   const [autoLoopRunning, setAutoLoopRunning] = useState(false);
   const [autoLoopStatus, setAutoLoopStatus] = useState<string | null>(null);
   const [autoLoopError, setAutoLoopError] = useState<string | null>(null);
+  const [editingKey, setEditingKey] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState("");
+  const [savingEditKey, setSavingEditKey] = useState<string | null>(null);
+  const [editError, setEditError] = useState<string | null>(null);
+  const [pendingSaveEntry, setPendingSaveEntry] = useState<GeneratedHpiEntry | null>(null);
 
   const entryKey = useCallback((e: GeneratedHpiEntry) => `${e.createdAt}\n${e.text}`, []);
 
@@ -337,12 +348,90 @@ export function MergedHpiSummary({
     }
   }, [caseId, onGeneratedHpiChange]);
 
+  const onStartEdit = useCallback(
+    (entry: GeneratedHpiEntry) => {
+      const k = entryKey(entry);
+      setEditError(null);
+      setEditingKey(k);
+      setEditDraft(entry.text);
+      setOpenHpiKeys((prev) => new Set(prev).add(k));
+    },
+    [entryKey],
+  );
+
+  const onCancelEdit = useCallback(() => {
+    setEditingKey(null);
+    setEditDraft("");
+    setEditError(null);
+    setPendingSaveEntry(null);
+  }, []);
+
+  const performSaveEdited = useCallback(
+    async (entry: GeneratedHpiEntry, mode: "new" | "update") => {
+      if (!caseId?.trim()) return;
+      const newText = editDraft.trim();
+      if (!newText) {
+        setEditError("Edited text cannot be empty.");
+        return;
+      }
+
+      const k = entryKey(entry);
+      setEditError(null);
+      setSavingEditKey(k);
+      try {
+        const res = await fetch(`/api/cases/${caseId}/generated-hpi`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            mode,
+            createdAt: entry.createdAt,
+            text: entry.text,
+            newText,
+          }),
+        });
+        const data = (await res.json().catch(() => ({}))) as {
+          generatedHPI?: GeneratedHpiEntry[];
+          error?: string;
+        };
+        if (!res.ok) {
+          setEditError(data.error ?? `Save failed (${res.status})`);
+          return;
+        }
+        if (Array.isArray(data.generatedHPI)) {
+          onGeneratedHpiChange?.(data.generatedHPI);
+        }
+        setEditingKey(null);
+        setEditDraft("");
+        setPendingSaveEntry(null);
+      } catch {
+        setEditError("Save request failed");
+      } finally {
+        setSavingEditKey(null);
+      }
+    },
+    [caseId, editDraft, entryKey, onGeneratedHpiChange],
+  );
+
+  const onSaveEdited = useCallback(
+    (entry: GeneratedHpiEntry) => {
+      const newText = editDraft.trim();
+      if (!newText) {
+        setEditError("Edited text cannot be empty.");
+        return;
+      }
+      setEditError(null);
+      setPendingSaveEntry(entry);
+    },
+    [editDraft],
+  );
+
   const busy =
     hpiLoading ||
     autoLoopRunning ||
     regeneratingKey !== null ||
     reviewingKey !== null ||
-    deletingKey !== null;
+    deletingKey !== null ||
+    savingEditKey !== null;
 
   return (
     <div className="flex flex-col gap-6">
@@ -390,6 +479,9 @@ export function MergedHpiSummary({
         ) : null}
         {autoLoopError ? (
           <p className="mt-2 text-sm text-red-700 dark:text-red-300">{autoLoopError}</p>
+        ) : null}
+        {editError ? (
+          <p className="mt-2 text-sm text-red-700 dark:text-red-300">{editError}</p>
         ) : null}
         <div className="mt-4 rounded-xl border border-violet-200 bg-violet-50/40 p-4 dark:border-violet-900/50 dark:bg-violet-950/20">
           <h3 className="text-xs font-semibold uppercase tracking-wide text-violet-900 dark:text-violet-200">
@@ -500,8 +592,23 @@ export function MergedHpiSummary({
                     </svg>
                     <span className="min-w-0 flex-1 text-xs text-zinc-600 dark:text-zinc-400">
                       {new Date(entry.createdAt).toLocaleString()}
+                      <span className="ml-2 rounded-full border border-zinc-300 bg-zinc-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-700 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200">
+                        {hpiTypeLabel(entry.type)}
+                      </span>
                     </span>
                     <div className="flex shrink-0 items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          onStartEdit(entry);
+                        }}
+                        disabled={busy}
+                        className="rounded-lg border border-zinc-300 bg-white px-2.5 py-1 text-xs font-medium text-foreground transition-colors hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-600 dark:bg-zinc-900 dark:hover:bg-zinc-800"
+                      >
+                        Edit
+                      </button>
                       <button
                         type="button"
                         onClick={(e) => {
@@ -533,11 +640,40 @@ export function MergedHpiSummary({
                     </div>
                   </summary>
                   <div className="border-t border-zinc-200 px-3 py-3 text-sm leading-relaxed text-foreground dark:border-zinc-800">
-                    {entry.text.split("\n\n").map((para, j) => (
-                      <p key={j} className="mb-3 last:mb-0">
-                        {para}
-                      </p>
-                    ))}
+                    {editingKey === k ? (
+                      <div className="mb-3 flex flex-col gap-2">
+                        <textarea
+                          value={editDraft}
+                          onChange={(e) => setEditDraft(e.target.value)}
+                          rows={8}
+                          className="w-full resize-y rounded-md border border-zinc-300 bg-white px-2.5 py-2 text-sm leading-relaxed outline-none ring-offset-background focus:border-zinc-500 focus:ring-2 focus:ring-zinc-400/30 dark:border-zinc-600 dark:bg-zinc-950 dark:focus:border-zinc-500"
+                        />
+                        <div className="flex flex-wrap items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => void onSaveEdited(entry)}
+                            disabled={busy || !editDraft.trim()}
+                            className="inline-flex h-8 items-center justify-center rounded-full border border-zinc-300 bg-white px-3 text-xs font-medium text-foreground transition-colors hover:bg-zinc-50 disabled:pointer-events-none disabled:opacity-50 dark:border-zinc-600 dark:bg-zinc-900 dark:hover:bg-zinc-800"
+                          >
+                            {savingEditKey === k ? "Saving…" : "Save"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={onCancelEdit}
+                            disabled={busy}
+                            className="inline-flex h-8 items-center justify-center rounded-full border border-zinc-300 bg-white px-3 text-xs font-medium text-foreground transition-colors hover:bg-zinc-50 disabled:pointer-events-none disabled:opacity-50 dark:border-zinc-600 dark:bg-zinc-900 dark:hover:bg-zinc-800"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      entry.text.split("\n\n").map((para, j) => (
+                        <p key={j} className="mb-3 last:mb-0">
+                          {para}
+                        </p>
+                      ))
+                    )}
                     {entry.score || entry.improvement ? (
                       <div className="mt-4 flex flex-col gap-3 rounded-lg border border-amber-200/80 bg-amber-50/50 p-3 dark:border-amber-900/50 dark:bg-amber-950/20">
                         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -809,6 +945,43 @@ export function MergedHpiSummary({
           ))}
         </div>
       </details>
+
+      {pendingSaveEntry ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 p-4">
+          <div className="w-full max-w-lg rounded-xl border border-zinc-200 bg-white p-5 shadow-xl dark:border-zinc-700 dark:bg-zinc-900">
+            <h3 className="text-base font-semibold text-foreground">Save edited HPI</h3>
+            <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
+              Choose how to save your edited HPI text.
+            </p>
+            <div className="mt-4 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => void performSaveEdited(pendingSaveEntry, "update")}
+                disabled={busy}
+                className="inline-flex h-9 items-center justify-center rounded-full border border-zinc-300 bg-white px-4 text-sm font-medium text-foreground transition-colors hover:bg-zinc-50 disabled:pointer-events-none disabled:opacity-50 dark:border-zinc-600 dark:bg-zinc-900 dark:hover:bg-zinc-800"
+              >
+                Update this HPI
+              </button>
+              <button
+                type="button"
+                onClick={() => void performSaveEdited(pendingSaveEntry, "new")}
+                disabled={busy}
+                className="inline-flex h-9 items-center justify-center rounded-full border border-zinc-300 bg-white px-4 text-sm font-medium text-foreground transition-colors hover:bg-zinc-50 disabled:pointer-events-none disabled:opacity-50 dark:border-zinc-600 dark:bg-zinc-900 dark:hover:bg-zinc-800"
+              >
+                Save as new HPI
+              </button>
+              <button
+                type="button"
+                onClick={() => setPendingSaveEntry(null)}
+                disabled={busy}
+                className="inline-flex h-9 items-center justify-center rounded-full border border-zinc-300 bg-white px-4 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-50 disabled:pointer-events-none disabled:opacity-50 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

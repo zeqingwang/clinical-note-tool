@@ -10,6 +10,7 @@ import {
   createDraftCaseRecord,
   emptyStructuredRawPersisted,
   generatedHpiScoreSchema,
+  generatedHpiTypeSchema,
   mcgEvaluationSchema,
 } from "@/models/case";
 import type { StructuredOutput } from "@/models/case";
@@ -19,6 +20,7 @@ import type {
   CaseEditableFields,
   GeneratedHpiEntry,
   GeneratedHpiScore,
+  GeneratedHpiType,
   CaseListItem,
   SourceDocument,
   SourceDocumentType,
@@ -87,7 +89,12 @@ function normalizeGeneratedHpi(raw: unknown): GeneratedHpiEntry[] {
     if (typeof o.text !== "string") continue;
     const createdAt =
       typeof o.createdAt === "string" && o.createdAt.trim() ? o.createdAt : new Date().toISOString();
-    const entry: GeneratedHpiEntry = { text: o.text, createdAt };
+    const type = generatedHpiTypeSchema.safeParse(o.type);
+    const entry: GeneratedHpiEntry = {
+      type: type.success ? type.data : "generated",
+      text: o.text,
+      createdAt,
+    };
     if (o.score != null && typeof o.score === "object") {
       const sp = generatedHpiScoreSchema.safeParse(o.score);
       if (sp.success) entry.score = sp.data;
@@ -108,6 +115,7 @@ export async function appendGeneratedHpi(caseId: string, text: string): Promise<
   const client = await clientPromise;
   const db = client.db(dbName());
   const entry: GeneratedHpiEntry = {
+    type: "generated",
     text,
     createdAt: new Date().toISOString(),
   };
@@ -121,6 +129,65 @@ export async function appendGeneratedHpi(caseId: string, text: string): Promise<
     update,
     { returnDocument: "after" },
   )) as Document | null;
+  if (!after) return null;
+  return normalizeGeneratedHpi(after.generatedHPI);
+}
+
+export async function appendGeneratedHpiWithType(
+  caseId: string,
+  text: string,
+  type: GeneratedHpiType,
+): Promise<GeneratedHpiEntry[] | null> {
+  if (!ObjectId.isValid(caseId)) return null;
+  const client = await clientPromise;
+  const db = client.db(dbName());
+  const entry: GeneratedHpiEntry = {
+    type,
+    text,
+    createdAt: new Date().toISOString(),
+  };
+  const update = {
+    $push: { generatedHPI: entry },
+    $set: { updatedAt: new Date() },
+  } as unknown as UpdateFilter<Document>;
+
+  const after = (await db.collection(CASE_COLLECTION).findOneAndUpdate(
+    { _id: new ObjectId(caseId) },
+    update,
+    { returnDocument: "after" },
+  )) as Document | null;
+  if (!after) return null;
+  return normalizeGeneratedHpi(after.generatedHPI);
+}
+
+export async function updateGeneratedHpiAsHumanRevise(
+  caseId: string,
+  entry: Pick<GeneratedHpiEntry, "createdAt" | "text">,
+  newText: string,
+): Promise<GeneratedHpiEntry[] | null> {
+  if (!ObjectId.isValid(caseId)) return null;
+  const client = await clientPromise;
+  const db = client.db(dbName());
+  const filter = {
+    _id: new ObjectId(caseId),
+    generatedHPI: { $elemMatch: { createdAt: entry.createdAt, text: entry.text } },
+  };
+  const update = {
+    $set: {
+      "generatedHPI.$[e].text": newText,
+      "generatedHPI.$[e].type": "human_revise",
+      updatedAt: new Date(),
+    },
+    $unset: {
+      "generatedHPI.$[e].score": "",
+      "generatedHPI.$[e].improvement": "",
+      "generatedHPI.$[e].reviewGeneratedAt": "",
+    },
+  } as unknown as UpdateFilter<Document>;
+  const after = (await db.collection(CASE_COLLECTION).findOneAndUpdate(filter, update, {
+    returnDocument: "after",
+    arrayFilters: [{ "e.createdAt": entry.createdAt, "e.text": entry.text }],
+  })) as Document | null;
   if (!after) return null;
   return normalizeGeneratedHpi(after.generatedHPI);
 }

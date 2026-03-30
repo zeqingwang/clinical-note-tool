@@ -8,6 +8,7 @@ export type {
   CaseStructuredRawDataPersisted,
   GeneratedHpiEntry,
   GeneratedHpiScore,
+  GeneratedHpiType,
   SourceDocument,
   SourceDocumentType,
   McgEvaluation,

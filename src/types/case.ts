@@ -4,6 +4,7 @@ import type {
   CaseStructuredRawDataPersisted,
   GeneratedHpiEntry,
   GeneratedHpiScore,
+  GeneratedHpiType,
   McgEvaluation,
 } from "@/models/case";
 
@@ -12,6 +13,7 @@ export type {
   CaseStructuredRawDataPersisted,
   GeneratedHpiEntry,
   GeneratedHpiScore,
+  GeneratedHpiType,
   McgEvaluation,
 };
 
