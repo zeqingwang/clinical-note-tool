@@ -47,6 +47,12 @@ export default function McgListPage() {
         const res = await fetch("/api/mcg/ingest", { method: "POST", body: fd });
         const data = (await res.json().catch(() => ({}))) as { id?: string; error?: string };
         if (!res.ok) {
+          // Helps diagnose Amplify 500s by showing the server error in console.
+          console.error("MCG upload failed", {
+            status: res.status,
+            error: data.error,
+            response: data,
+          });
           setIngestError(data.error ?? `Upload failed (${res.status})`);
           return;
         }
@@ -54,7 +60,8 @@ export default function McgListPage() {
           await load();
           window.location.href = `/mcg/${data.id}`;
         }
-      } catch {
+      } catch (e) {
+        console.error("MCG upload request threw", e);
         setIngestError("Upload request failed");
       } finally {
         setIngesting(false);
