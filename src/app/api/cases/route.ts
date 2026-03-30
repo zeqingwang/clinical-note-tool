@@ -3,8 +3,15 @@ import { NextResponse } from "next/server";
 import { insertDraftCase, listCases } from "@/lib/cases-db";
 
 export async function GET() {
-  const items = await listCases();
-  return NextResponse.json(items);
+  try {
+    const items = await listCases();
+    return NextResponse.json(items);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "Unknown error";
+    // Useful for Amplify debugging: surfaces server-side failure reason to the client.
+    console.error("GET /api/cases failed:", msg);
+    return NextResponse.json({ error: msg }, { status: 500 });
+  }
 }
 
 export async function POST() {
