@@ -75,8 +75,21 @@ export function MergedHpiSummary({
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [reviewingKey, setReviewingKey] = useState<string | null>(null);
   const [reviewError, setReviewError] = useState<string | null>(null);
+  const [regenerateDrafts, setRegenerateDrafts] = useState<Record<string, string>>({});
+  const [regeneratingKey, setRegeneratingKey] = useState<string | null>(null);
+  const [regenerateError, setRegenerateError] = useState<string | null>(null);
 
   const entryKey = useCallback((e: GeneratedHpiEntry) => `${e.createdAt}\n${e.text}`, []);
+
+  const appendRegenerateLine = useCallback((k: string, line: string) => {
+    const chunk = line.trim();
+    if (!chunk) return;
+    setRegenerateDrafts((prev) => {
+      const cur = (prev[k] ?? "").trimEnd();
+      const next = cur ? `${cur}\n${chunk}` : chunk;
+      return { ...prev, [k]: next };
+    });
+  }, []);
 
   const reversedHpi = useMemo(() => [...generatedHPI].reverse(), [generatedHPI]);
   const hpiListLenRef = useRef(0);
@@ -159,6 +172,49 @@ export function MergedHpiSummary({
     [caseId, entryKey, onGeneratedHpiChange],
   );
 
+  const onRegenerateFromNotes = useCallback(
+    async (entry: GeneratedHpiEntry, improvementNotes: string) => {
+      const trimmed = improvementNotes.trim();
+      if (!trimmed || !caseId?.trim()) return;
+      const k = entryKey(entry);
+      setRegenerateError(null);
+      setRegeneratingKey(k);
+      try {
+        const res = await fetch(`/api/cases/${caseId}/regenerate-hpi`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            originalHpiText: entry.text,
+            improvementNotes: trimmed,
+          }),
+        });
+        const data = (await res.json().catch(() => ({}))) as {
+          hpi?: string;
+          generatedHPI?: GeneratedHpiEntry[];
+          error?: string;
+        };
+        if (!res.ok) {
+          setRegenerateError(data.error ?? `Regeneration failed (${res.status})`);
+          return;
+        }
+        if (typeof data.hpi === "string" && data.hpi.trim() && Array.isArray(data.generatedHPI)) {
+          onGeneratedHpiChange?.(data.generatedHPI);
+          setRegenerateDrafts((prev) => {
+            const { [k]: _, ...rest } = prev;
+            return rest;
+          });
+        } else {
+          setRegenerateError("Empty response");
+        }
+      } catch {
+        setRegenerateError("Regeneration request failed");
+      } finally {
+        setRegeneratingKey(null);
+      }
+    },
+    [caseId, entryKey, onGeneratedHpiChange],
+  );
+
   const onGenerateHpi = useCallback(async () => {
     if (!caseId?.trim()) return;
     setHpiError(null);
@@ -202,7 +258,7 @@ export function MergedHpiSummary({
           <button
             type="button"
             onClick={() => void onGenerateHpi()}
-            disabled={hpiLoading || !caseId?.trim()}
+            disabled={hpiLoading || !caseId?.trim() || regeneratingKey !== null}
             className="inline-flex h-9 items-center justify-center rounded-full border border-zinc-300 bg-white px-4 text-sm font-medium text-foreground transition-colors hover:bg-zinc-50 disabled:pointer-events-none disabled:opacity-50 dark:border-zinc-600 dark:bg-zinc-900 dark:hover:bg-zinc-800"
           >
             {hpiLoading ? "Generating…" : "Generate HPI"}
@@ -217,12 +273,15 @@ export function MergedHpiSummary({
         {reviewError ? (
           <p className="mt-2 text-sm text-red-700 dark:text-red-300">{reviewError}</p>
         ) : null}
+        {regenerateError ? (
+          <p className="mt-2 text-sm text-red-700 dark:text-red-300">{regenerateError}</p>
+        ) : null}
         {generatedHPI.length > 0 ? (
           <div className="mt-4 flex flex-col gap-2">
             <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
               Generated HPI (history)
             </h3>
-            {reversedHpi.map((entry) => {
+            {reversedHpi.map((entry, idx) => {
               const k = entryKey(entry);
               const isOpen = openHpiKeys.has(k);
               return (
@@ -264,7 +323,9 @@ export function MergedHpiSummary({
                           e.stopPropagation();
                           void onReviewHpiEntry(entry);
                         }}
-                        disabled={reviewingKey !== null || deletingKey !== null}
+                        disabled={
+                          reviewingKey !== null || deletingKey !== null || regeneratingKey !== null
+                        }
                         className="rounded-lg border border-zinc-300 bg-white px-2.5 py-1 text-xs font-medium text-foreground transition-colors hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-600 dark:bg-zinc-900 dark:hover:bg-zinc-800"
                       >
                         {reviewingKey === k
@@ -280,7 +341,9 @@ export function MergedHpiSummary({
                           e.stopPropagation();
                           void onDeleteHpiEntry(entry);
                         }}
-                        disabled={deletingKey !== null || reviewingKey !== null}
+                        disabled={
+                          deletingKey !== null || reviewingKey !== null || regeneratingKey !== null
+                        }
                         className="rounded-lg border border-red-200 bg-white px-2.5 py-1 text-xs font-medium text-red-700 transition-colors hover:bg-red-50 disabled:opacity-50 dark:border-red-900 dark:bg-zinc-950 dark:text-red-300 dark:hover:bg-red-950/40"
                       >
                         {deletingKey === k ? "…" : "Delete"}
@@ -321,11 +384,21 @@ export function MergedHpiSummary({
                             {entry.score.missingPoints.length > 0 ? (
                               <div>
                                 <p className="mb-1 text-xs font-medium text-zinc-600 dark:text-zinc-400">
-                                  Missing or thin points
+                                  Missing or thin points{" "}
+                                  <span className="font-normal text-zinc-500">(click to append)</span>
                                 </p>
-                                <ul className="list-inside list-disc space-y-0.5 text-sm text-foreground">
+                                <ul className="flex flex-col gap-1 text-sm text-foreground">
                                   {entry.score.missingPoints.map((line, idx) => (
-                                    <li key={idx}>{line}</li>
+                                    <li key={idx} className="list-none">
+                                      <button
+                                        type="button"
+                                        onClick={() => appendRegenerateLine(k, line)}
+                                        className="w-full rounded-md border border-transparent px-1.5 py-1 text-left leading-snug text-foreground transition-colors hover:border-zinc-200 hover:bg-white/80 dark:hover:border-zinc-700 dark:hover:bg-zinc-900/50"
+                                      >
+                                        <span className="mr-1.5 text-zinc-400">+</span>
+                                        {line}
+                                      </button>
+                                    </li>
                                   ))}
                                 </ul>
                               </div>
@@ -333,11 +406,25 @@ export function MergedHpiSummary({
                             {entry.score.inconsistencies.length > 0 ? (
                               <div>
                                 <p className="mb-1 text-xs font-medium text-amber-800 dark:text-amber-200/80">
-                                  Inconsistencies
+                                  Inconsistencies{" "}
+                                  <span className="font-normal text-amber-700/80 dark:text-amber-300/70">
+                                    (click to append)
+                                  </span>
                                 </p>
-                                <ul className="list-inside list-disc space-y-0.5 text-sm text-amber-950 dark:text-amber-100/90">
+                                <ul className="flex flex-col gap-1 text-sm">
                                   {entry.score.inconsistencies.map((line, idx) => (
-                                    <li key={idx}>{line}</li>
+                                    <li key={idx} className="list-none">
+                                      <button
+                                        type="button"
+                                        onClick={() => appendRegenerateLine(k, line)}
+                                        className="w-full rounded-md border border-transparent px-1.5 py-1 text-left leading-snug text-amber-950 transition-colors hover:border-amber-200 hover:bg-amber-100/60 dark:text-amber-100/90 dark:hover:border-amber-800 dark:hover:bg-amber-950/40"
+                                      >
+                                        <span className="mr-1.5 text-amber-600 dark:text-amber-400">
+                                          +
+                                        </span>
+                                        {line}
+                                      </button>
+                                    </li>
                                   ))}
                                 </ul>
                               </div>
@@ -347,13 +434,66 @@ export function MergedHpiSummary({
                         {entry.improvement ? (
                           <div>
                             <p className="mb-1 text-xs font-medium text-zinc-600 dark:text-zinc-400">
-                              Suggested improvements
+                              Suggested improvements{" "}
+                              <span className="font-normal text-zinc-500">(click a paragraph)</span>
                             </p>
-                            <pre className="whitespace-pre-wrap break-words rounded-md border border-zinc-200 bg-white/80 px-2.5 py-2 text-sm leading-relaxed text-foreground dark:border-zinc-700 dark:bg-zinc-900/60">
-                              {entry.improvement}
-                            </pre>
+                            <div className="flex flex-col gap-1.5">
+                              {entry.improvement
+                                .split(/\n{2,}/)
+                                .map((p) => p.trim())
+                                .filter(Boolean)
+                                .map((para, idx) => (
+                                  <button
+                                    key={idx}
+                                    type="button"
+                                    onClick={() => appendRegenerateLine(k, para)}
+                                    className="rounded-md border border-zinc-200 bg-white/80 px-2.5 py-2 text-left text-sm leading-relaxed text-foreground transition-colors hover:border-zinc-300 hover:bg-white dark:border-zinc-700 dark:bg-zinc-900/60 dark:hover:border-zinc-600"
+                                  >
+                                    {para}
+                                  </button>
+                                ))}
+                            </div>
                           </div>
                         ) : null}
+                        <div className="mt-1 border-t border-amber-200/70 pt-3 dark:border-amber-900/40">
+                          <label
+                            htmlFor={`regen-notes-${idx}`}
+                            className="mb-1 block text-xs font-medium text-zinc-700 dark:text-zinc-300"
+                          >
+                            Regeneration notes
+                            <span className="ml-1 font-normal text-zinc-500">
+                              (not saved; sent with this HPI and the clinical summary to the model)
+                            </span>
+                          </label>
+                          <textarea
+                            id={`regen-notes-${idx}`}
+                            value={regenerateDrafts[k] ?? ""}
+                            onChange={(e) =>
+                              setRegenerateDrafts((prev) => ({ ...prev, [k]: e.target.value }))
+                            }
+                            rows={5}
+                            placeholder="Add priorities for the revised HPI, or click items above to append…"
+                            className="w-full resize-y rounded-md border border-zinc-300 bg-white px-2.5 py-2 text-sm outline-none ring-offset-background focus:border-zinc-500 focus:ring-2 focus:ring-zinc-400/30 dark:border-zinc-600 dark:bg-zinc-950 dark:focus:border-zinc-500"
+                          />
+                          <div className="mt-2 flex flex-wrap items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                void onRegenerateFromNotes(entry, regenerateDrafts[k] ?? "")
+                              }
+                              disabled={
+                                !caseId?.trim() ||
+                                !(regenerateDrafts[k] ?? "").trim() ||
+                                regeneratingKey !== null ||
+                                reviewingKey !== null ||
+                                deletingKey !== null
+                              }
+                              className="inline-flex h-9 items-center justify-center rounded-full border border-zinc-300 bg-white px-4 text-sm font-medium text-foreground transition-colors hover:bg-zinc-50 disabled:pointer-events-none disabled:opacity-50 dark:border-zinc-600 dark:bg-zinc-900 dark:hover:bg-zinc-800"
+                            >
+                              {regeneratingKey === k ? "Regenerating…" : "Regenerate HPI"}
+                            </button>
+                          </div>
+                        </div>
                       </div>
                     ) : null}
                   </div>
