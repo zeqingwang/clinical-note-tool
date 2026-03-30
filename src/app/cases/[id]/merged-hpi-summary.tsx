@@ -5,6 +5,66 @@ import { rebuildStructuredRawDataFromDocuments } from "@/lib/structured-raw-data
 import { emptyStructuredRawPersisted, type MergedForHpi } from "@/models/case";
 import type { GeneratedHpiEntry, SourceDocument } from "@/types/case";
 
+type HpiRegenerateBucket = "missing" | "inconsistency" | "suggested";
+
+type HpiRegenerateInstructionDraft = {
+  missingPoints: string[];
+  inconsistencies: string[];
+  suggestedImprovements: string[];
+  /** Freeform author notes (not from + clicks). */
+  custom: string;
+};
+
+function emptyRegenInstruction(): HpiRegenerateInstructionDraft {
+  return {
+    missingPoints: [],
+    inconsistencies: [],
+    suggestedImprovements: [],
+    custom: "",
+  };
+}
+
+function appendUniqueItem(list: string[], item: string): string[] {
+  const t = item.trim();
+  if (!t) return list;
+  if (list.some((x) => x === t)) return list;
+  return [...list, t];
+}
+
+function regenInstructionToPrompt(d: HpiRegenerateInstructionDraft): string {
+  const parts: string[] = [];
+  if (d.missingPoints.length > 0) {
+    parts.push(
+      "## Missing or thin points to address\n" + d.missingPoints.map((x) => `- ${x}`).join("\n"),
+    );
+  }
+  if (d.inconsistencies.length > 0) {
+    parts.push(
+      "## Inconsistencies to resolve\n" + d.inconsistencies.map((x) => `- ${x}`).join("\n"),
+    );
+  }
+  if (d.suggestedImprovements.length > 0) {
+    parts.push(
+      "## Suggested improvements (from review)\n" +
+        d.suggestedImprovements.map((x) => `- ${x.replace(/\r?\n/g, " ").trim()}`).join("\n"),
+    );
+  }
+  const custom = d.custom.trim();
+  if (custom.length > 0) {
+    parts.push("## Custom instructions from author\n" + custom);
+  }
+  return parts.join("\n\n");
+}
+
+function isRegenInstructionEmpty(d: HpiRegenerateInstructionDraft): boolean {
+  return (
+    d.missingPoints.length === 0 &&
+    d.inconsistencies.length === 0 &&
+    d.suggestedImprovements.length === 0 &&
+    d.custom.trim() === ""
+  );
+}
+
 const PRIMARY_FIELDS: { key: keyof MergedForHpi; label: string }[] = [
   { key: "timeline", label: "Timeline" },
   { key: "symptoms", label: "Symptoms" },
@@ -75,19 +135,62 @@ export function MergedHpiSummary({
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [reviewingKey, setReviewingKey] = useState<string | null>(null);
   const [reviewError, setReviewError] = useState<string | null>(null);
-  const [regenerateDrafts, setRegenerateDrafts] = useState<Record<string, string>>({});
+  const [regenerateDrafts, setRegenerateDrafts] = useState<
+    Record<string, HpiRegenerateInstructionDraft>
+  >({});
   const [regeneratingKey, setRegeneratingKey] = useState<string | null>(null);
   const [regenerateError, setRegenerateError] = useState<string | null>(null);
 
   const entryKey = useCallback((e: GeneratedHpiEntry) => `${e.createdAt}\n${e.text}`, []);
 
-  const appendRegenerateLine = useCallback((k: string, line: string) => {
-    const chunk = line.trim();
-    if (!chunk) return;
+  const addRegenerateInstructionItem = useCallback((k: string, bucket: HpiRegenerateBucket, line: string) => {
     setRegenerateDrafts((prev) => {
-      const cur = (prev[k] ?? "").trimEnd();
-      const next = cur ? `${cur}\n${chunk}` : chunk;
-      return { ...prev, [k]: next };
+      const cur = prev[k] ?? emptyRegenInstruction();
+      if (bucket === "missing") {
+        return { ...prev, [k]: { ...cur, missingPoints: appendUniqueItem(cur.missingPoints, line) } };
+      }
+      if (bucket === "inconsistency") {
+        return { ...prev, [k]: { ...cur, inconsistencies: appendUniqueItem(cur.inconsistencies, line) } };
+      }
+      return {
+        ...prev,
+        [k]: { ...cur, suggestedImprovements: appendUniqueItem(cur.suggestedImprovements, line) },
+      };
+    });
+  }, []);
+
+  const removeRegenerateInstructionItem = useCallback(
+    (k: string, bucket: HpiRegenerateBucket, index: number) => {
+      setRegenerateDrafts((prev) => {
+        const cur = prev[k] ?? emptyRegenInstruction();
+        if (bucket === "missing") {
+          return {
+            ...prev,
+            [k]: { ...cur, missingPoints: cur.missingPoints.filter((_, i) => i !== index) },
+          };
+        }
+        if (bucket === "inconsistency") {
+          return {
+            ...prev,
+            [k]: { ...cur, inconsistencies: cur.inconsistencies.filter((_, i) => i !== index) },
+          };
+        }
+        return {
+          ...prev,
+          [k]: {
+            ...cur,
+            suggestedImprovements: cur.suggestedImprovements.filter((_, i) => i !== index),
+          },
+        };
+      });
+    },
+    [],
+  );
+
+  const setRegenerateCustom = useCallback((k: string, custom: string) => {
+    setRegenerateDrafts((prev) => {
+      const cur = prev[k] ?? emptyRegenInstruction();
+      return { ...prev, [k]: { ...cur, custom } };
     });
   }, []);
 
@@ -385,14 +488,16 @@ export function MergedHpiSummary({
                               <div>
                                 <p className="mb-1 text-xs font-medium text-zinc-600 dark:text-zinc-400">
                                   Missing or thin points{" "}
-                                  <span className="font-normal text-zinc-500">(click to append)</span>
+                                  <span className="font-normal text-zinc-500">
+                                    (click + to add below)
+                                  </span>
                                 </p>
                                 <ul className="flex flex-col gap-1 text-sm text-foreground">
                                   {entry.score.missingPoints.map((line, idx) => (
                                     <li key={idx} className="list-none">
                                       <button
                                         type="button"
-                                        onClick={() => appendRegenerateLine(k, line)}
+                                        onClick={() => addRegenerateInstructionItem(k, "missing", line)}
                                         className="w-full rounded-md border border-transparent px-1.5 py-1 text-left leading-snug text-foreground transition-colors hover:border-zinc-200 hover:bg-white/80 dark:hover:border-zinc-700 dark:hover:bg-zinc-900/50"
                                       >
                                         <span className="mr-1.5 text-zinc-400">+</span>
@@ -408,7 +513,7 @@ export function MergedHpiSummary({
                                 <p className="mb-1 text-xs font-medium text-amber-800 dark:text-amber-200/80">
                                   Inconsistencies{" "}
                                   <span className="font-normal text-amber-700/80 dark:text-amber-300/70">
-                                    (click to append)
+                                    (click + to add below)
                                   </span>
                                 </p>
                                 <ul className="flex flex-col gap-1 text-sm">
@@ -416,7 +521,9 @@ export function MergedHpiSummary({
                                     <li key={idx} className="list-none">
                                       <button
                                         type="button"
-                                        onClick={() => appendRegenerateLine(k, line)}
+                                        onClick={() =>
+                                          addRegenerateInstructionItem(k, "inconsistency", line)
+                                        }
                                         className="w-full rounded-md border border-transparent px-1.5 py-1 text-left leading-snug text-amber-950 transition-colors hover:border-amber-200 hover:bg-amber-100/60 dark:text-amber-100/90 dark:hover:border-amber-800 dark:hover:bg-amber-950/40"
                                       >
                                         <span className="mr-1.5 text-amber-600 dark:text-amber-400">
@@ -435,7 +542,7 @@ export function MergedHpiSummary({
                           <div>
                             <p className="mb-1 text-xs font-medium text-zinc-600 dark:text-zinc-400">
                               Suggested improvements{" "}
-                              <span className="font-normal text-zinc-500">(click a paragraph)</span>
+                              <span className="font-normal text-zinc-500">(click to add below)</span>
                             </p>
                             <div className="flex flex-col gap-1.5">
                               {entry.improvement
@@ -446,7 +553,7 @@ export function MergedHpiSummary({
                                   <button
                                     key={idx}
                                     type="button"
-                                    onClick={() => appendRegenerateLine(k, para)}
+                                    onClick={() => addRegenerateInstructionItem(k, "suggested", para)}
                                     className="rounded-md border border-zinc-200 bg-white/80 px-2.5 py-2 text-left text-sm leading-relaxed text-foreground transition-colors hover:border-zinc-300 hover:bg-white dark:border-zinc-700 dark:bg-zinc-900/60 dark:hover:border-zinc-600"
                                   >
                                     {para}
@@ -456,43 +563,148 @@ export function MergedHpiSummary({
                           </div>
                         ) : null}
                         <div className="mt-1 border-t border-amber-200/70 pt-3 dark:border-amber-900/40">
-                          <label
-                            htmlFor={`regen-notes-${idx}`}
-                            className="mb-1 block text-xs font-medium text-zinc-700 dark:text-zinc-300"
-                          >
-                            Regeneration notes
-                            <span className="ml-1 font-normal text-zinc-500">
-                              (not saved; sent with this HPI and the clinical summary to the model)
+                          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-600 dark:text-zinc-400">
+                            Regeneration instructions
+                            <span className="ml-1 font-normal normal-case text-zinc-500">
+                              (not saved; structured like the review above, plus custom notes)
                             </span>
-                          </label>
-                          <textarea
-                            id={`regen-notes-${idx}`}
-                            value={regenerateDrafts[k] ?? ""}
-                            onChange={(e) =>
-                              setRegenerateDrafts((prev) => ({ ...prev, [k]: e.target.value }))
-                            }
-                            rows={5}
-                            placeholder="Add priorities for the revised HPI, or click items above to append…"
-                            className="w-full resize-y rounded-md border border-zinc-300 bg-white px-2.5 py-2 text-sm outline-none ring-offset-background focus:border-zinc-500 focus:ring-2 focus:ring-zinc-400/30 dark:border-zinc-600 dark:bg-zinc-950 dark:focus:border-zinc-500"
-                          />
-                          <div className="mt-2 flex flex-wrap items-center gap-2">
-                            <button
-                              type="button"
-                              onClick={() =>
-                                void onRegenerateFromNotes(entry, regenerateDrafts[k] ?? "")
-                              }
-                              disabled={
-                                !caseId?.trim() ||
-                                !(regenerateDrafts[k] ?? "").trim() ||
-                                regeneratingKey !== null ||
-                                reviewingKey !== null ||
-                                deletingKey !== null
-                              }
-                              className="inline-flex h-9 items-center justify-center rounded-full border border-zinc-300 bg-white px-4 text-sm font-medium text-foreground transition-colors hover:bg-zinc-50 disabled:pointer-events-none disabled:opacity-50 dark:border-zinc-600 dark:bg-zinc-900 dark:hover:bg-zinc-800"
-                            >
-                              {regeneratingKey === k ? "Regenerating…" : "Regenerate HPI"}
-                            </button>
-                          </div>
+                          </p>
+                          {(() => {
+                            const draft = regenerateDrafts[k] ?? emptyRegenInstruction();
+                            const prompt = regenInstructionToPrompt(draft);
+                            return (
+                              <div className="flex flex-col gap-3">
+                                <div>
+                                  <p className="mb-1 text-xs font-medium text-zinc-600 dark:text-zinc-400">
+                                    Missing or thin points to address
+                                  </p>
+                                  {draft.missingPoints.length === 0 ? (
+                                    <p className="text-xs italic text-zinc-400 dark:text-zinc-500">
+                                      None yet — use + in the review list above.
+                                    </p>
+                                  ) : (
+                                    <ul className="flex flex-col gap-1">
+                                      {draft.missingPoints.map((line, i) => (
+                                        <li
+                                          key={`m-${i}`}
+                                          className="flex items-start gap-2 rounded-md border border-zinc-200 bg-white/90 px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-900/50"
+                                        >
+                                          <span className="min-w-0 flex-1 leading-snug">{line}</span>
+                                          <button
+                                            type="button"
+                                            aria-label="Remove"
+                                            onClick={() =>
+                                              removeRegenerateInstructionItem(k, "missing", i)
+                                            }
+                                            className="shrink-0 rounded px-1 text-zinc-500 hover:bg-zinc-100 hover:text-foreground dark:hover:bg-zinc-800"
+                                          >
+                                            ×
+                                          </button>
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  )}
+                                </div>
+                                <div>
+                                  <p className="mb-1 text-xs font-medium text-amber-800 dark:text-amber-200/80">
+                                    Inconsistencies to resolve
+                                  </p>
+                                  {draft.inconsistencies.length === 0 ? (
+                                    <p className="text-xs italic text-zinc-400 dark:text-zinc-500">
+                                      None yet — use + in the review list above.
+                                    </p>
+                                  ) : (
+                                    <ul className="flex flex-col gap-1">
+                                      {draft.inconsistencies.map((line, i) => (
+                                        <li
+                                          key={`i-${i}`}
+                                          className="flex items-start gap-2 rounded-md border border-amber-200/90 bg-white/90 px-2 py-1.5 text-sm dark:border-amber-900/60 dark:bg-zinc-900/50"
+                                        >
+                                          <span className="min-w-0 flex-1 leading-snug">{line}</span>
+                                          <button
+                                            type="button"
+                                            aria-label="Remove"
+                                            onClick={() =>
+                                              removeRegenerateInstructionItem(k, "inconsistency", i)
+                                            }
+                                            className="shrink-0 rounded px-1 text-zinc-500 hover:bg-amber-100/50 hover:text-foreground dark:hover:bg-zinc-800"
+                                          >
+                                            ×
+                                          </button>
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  )}
+                                </div>
+                                <div>
+                                  <p className="mb-1 text-xs font-medium text-zinc-600 dark:text-zinc-400">
+                                    Suggested improvements (from review)
+                                  </p>
+                                  {draft.suggestedImprovements.length === 0 ? (
+                                    <p className="text-xs italic text-zinc-400 dark:text-zinc-500">
+                                      None yet — click a paragraph in “Suggested improvements” above.
+                                    </p>
+                                  ) : (
+                                    <ul className="flex flex-col gap-1">
+                                      {draft.suggestedImprovements.map((line, i) => (
+                                        <li
+                                          key={`s-${i}`}
+                                          className="flex items-start gap-2 rounded-md border border-zinc-200 bg-white/90 px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-900/50"
+                                        >
+                                          <span className="min-w-0 flex-1 whitespace-pre-wrap leading-snug">
+                                            {line}
+                                          </span>
+                                          <button
+                                            type="button"
+                                            aria-label="Remove"
+                                            onClick={() =>
+                                              removeRegenerateInstructionItem(k, "suggested", i)
+                                            }
+                                            className="shrink-0 rounded px-1 text-zinc-500 hover:bg-zinc-100 hover:text-foreground dark:hover:bg-zinc-800"
+                                          >
+                                            ×
+                                          </button>
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  )}
+                                </div>
+                                <div>
+                                  <label
+                                    htmlFor={`regen-custom-${idx}`}
+                                    className="mb-1 block text-xs font-medium text-zinc-700 dark:text-zinc-300"
+                                  >
+                                    Custom instructions
+                                  </label>
+                                  <textarea
+                                    id={`regen-custom-${idx}`}
+                                    value={draft.custom}
+                                    onChange={(e) => setRegenerateCustom(k, e.target.value)}
+                                    rows={4}
+                                    placeholder="Anything else the model should honor when rewriting this HPI…"
+                                    className="w-full resize-y rounded-md border border-zinc-300 bg-white px-2.5 py-2 text-sm outline-none ring-offset-background focus:border-zinc-500 focus:ring-2 focus:ring-zinc-400/30 dark:border-zinc-600 dark:bg-zinc-950 dark:focus:border-zinc-500"
+                                  />
+                                </div>
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => void onRegenerateFromNotes(entry, prompt)}
+                                    disabled={
+                                      !caseId?.trim() ||
+                                      isRegenInstructionEmpty(draft) ||
+                                      !prompt.trim() ||
+                                      regeneratingKey !== null ||
+                                      reviewingKey !== null ||
+                                      deletingKey !== null
+                                    }
+                                    className="inline-flex h-9 items-center justify-center rounded-full border border-zinc-300 bg-white px-4 text-sm font-medium text-foreground transition-colors hover:bg-zinc-50 disabled:pointer-events-none disabled:opacity-50 dark:border-zinc-600 dark:bg-zinc-900 dark:hover:bg-zinc-800"
+                                  >
+                                    {regeneratingKey === k ? "Regenerating…" : "Regenerate HPI"}
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          })()}
                         </div>
                       </div>
                     ) : null}

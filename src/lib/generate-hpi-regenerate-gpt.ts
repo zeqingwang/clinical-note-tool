@@ -15,7 +15,7 @@ You receive four blocks:
 
 3) originalHpi: the current HPI narrative to improve.
 
-4) userRegenerationNotes: author instructions, often from a payer-readiness review. The author may edit this freely.
+4) userRegenerationNotes: author instructions as markdown with optional sections: "Missing or thin points to address", "Inconsistencies to resolve", "Suggested improvements (from review)", and "Custom instructions from author". Honor each section when rewriting.
 
 Task:
 Rewrite the HPI as ONE cohesive narrative that addresses userRegenerationNotes while staying faithful to clinicalSummaryMarkdown and structuredInput.
