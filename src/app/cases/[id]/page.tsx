@@ -105,6 +105,12 @@ export default function CaseEditPage() {
       setIngesting(true);
       setIngestProgress(0);
       const started = Date.now();
+
+      // Snapshot before upload so we can detect whether the server finished processing
+      // even if the gateway returns 504 to the browser.
+      const prevUpdatedAt = doc?.updatedAt?.getTime();
+      const prevSourceCount = doc?.sourceDocuments?.length ?? 0;
+
       const progressTimer = window.setInterval(() => {
         const elapsed = Date.now() - started;
         setIngestProgress(Math.min(95, (elapsed / INGEST_EXPECT_MS) * 95));
@@ -116,6 +122,41 @@ export default function CaseEditPage() {
           method: "POST",
           body: fd,
         });
+
+        if (res.status === 504) {
+          // Gateway timeout: backend may still be processing and may eventually write to DB.
+          // Poll for a short window and only show an error if nothing changed.
+          const maxAttempts = 6;
+          const waitMs = 2000;
+
+          for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+            const refreshed = await fetch(`/api/cases/${id}`, caseFetchInit);
+            if (refreshed.ok) {
+              const refreshedDoc = (await refreshed.json()) as CaseDetail;
+              const changed =
+                (typeof prevUpdatedAt === "number" && refreshedDoc.updatedAt?.getTime() !== prevUpdatedAt) ||
+                refreshedDoc.sourceDocuments.length !== prevSourceCount;
+
+              if (changed) {
+                setDoc(refreshedDoc);
+                setTitle(refreshedDoc.title);
+                setContent(refreshedDoc.content);
+                setIngestProgress(100);
+                startTransition(() => router.refresh());
+                return;
+              }
+            }
+            await new Promise((r) => setTimeout(r, waitMs));
+          }
+
+          // No observable update after polling.
+          setIngestError(
+            "Upload timed out (504), but processing may still continue. Please wait a few seconds and refresh this page.",
+          );
+          setIngestProgress(0);
+          return;
+        }
+
         const payload = (await res.json().catch(() => ({}))) as {
           error?: string;
           sourceDocuments?: SourceDocument[];
@@ -155,7 +196,7 @@ export default function CaseEditPage() {
         setIngestProgress(0);
       }
     },
-    [id, router],
+    [id, router, doc],
   );
 
   const onDeleteSource = useCallback(
