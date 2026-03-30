@@ -14,6 +14,7 @@ Open `/cases`.
 5. For each generated HPI entry:
    - `Review` runs a payer/UM score + missing points + inconsistencies + improvements.
    - `Regenerate review` regenerates a new HPI using the review output.
+   - `Regenerate HPI`based on the review, user can select the point at to the prompt, and also manually input, to regenerate a new version of HPI.
    - `Edit` allows direct modification with a simple choice:
      - `Update this HPI`: modifies the current entry, sets `type: human_revise`, and clears score/review fields.
      - `Save as new HPI`: creates a new entry with `type: human_revise` and clears score/review fields for the new one.
@@ -39,9 +40,7 @@ Create `.env.local` with:
 
 ```bash
 MONGODB_URI=your_mongodb_connection_string
-MONGODB_DB=your_optional_database_name
 OPENAI_API_KEY=your_openai_key
-OPENAI_MODEL=gpt-4o-mini
 ```
 
 ### Local dev
@@ -97,8 +96,7 @@ Amplify usually detects Next.js automatically; if not, choose the Next.js framew
 ### 3) Configure environment variables in Amplify
 Add:
 - `MONGODB_URI`
-- `MONGODB_DB` (optional)
 - `OPENAI_API_KEY`
-- `OPENAI_MODEL` (optional, defaults to `gpt-4o-mini`)
+
 
 Then redeploy.
