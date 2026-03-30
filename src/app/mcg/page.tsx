@@ -45,12 +45,20 @@ export default function McgListPage() {
         const fd = new FormData();
         fd.append("file", file);
         const res = await fetch("/api/mcg/ingest", { method: "POST", body: fd });
-        const data = (await res.json().catch(() => ({}))) as { id?: string; error?: string };
+        const bodyText = await res.text();
+        let data = {} as { id?: string; error?: string };
+        try {
+          data = JSON.parse(bodyText) as { id?: string; error?: string };
+        } catch {
+          // Non-JSON response body (common for 500 HTML error pages)
+          data = {};
+        }
         if (!res.ok) {
           // Helps diagnose Amplify 500s by showing the server error in console.
           console.error("MCG upload failed", {
             status: res.status,
             error: data.error,
+            responseText: bodyText,
             response: data,
           });
           setIngestError(data.error ?? `Upload failed (${res.status})`);
